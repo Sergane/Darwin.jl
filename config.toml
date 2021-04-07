@@ -1,0 +1,37 @@
+[common]
+title = "Weibel Instability."
+dir = "data"
+
+[physical.species]
+name =   ["electron", "ion"]
+mass =   [ 1,        1836]
+charge = [ -1,       1]
+
+# electron
+[[physical.species.V_distribution]]
+type = "Normal"
+params = [0.01, 0.01, 0.05]
+[[physical.species.R_distribution]]
+type = "Uniform"
+
+# ion
+[[physical.species.V_distribution]]
+type = "Normal"
+params = [0.01, 0.01, 0.01]
+[[physical.species.R_distribution]]
+type = "Uniform"
+
+[physical.boundary]
+left = 0.0
+right = 10.0
+#periodic = true
+time = 30000
+
+[numerical]
+nodes_num = 10  #grid_step = 1.0
+time_step = 0.25
+particles_per_cell = [2048, 2048]
+particle_pusher = "Leapfrog"
+
+[out]
+particle_dens_span = [10, 50]
