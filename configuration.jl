@@ -10,30 +10,6 @@ struct Configuration
     end
 end
 
-#=
-function print_dict(data::Dict, indent_lvl=0)
-    indent_str = repeat("  ", indent_lvl)
-    for item_key in keys(data)
-        item_str = replace(item_key, '_'=>' ')
-        print(indent_str, item_str, ": ")
-        item = data[item_key]
-        if isa(item, Dict)
-            println()
-            print_dict(item, indent_lvl+1)
-        elseif isa(item, Array{<:Dict})
-            for subitem in item
-                println()
-                print_dict(subitem, indent_lvl+1)
-            end
-        else
-            println(item)
-        end
-    end
-end
-
-print_configuration(config::Configuration) = print_dict(config.data)
-=#
-
 function dict_to_str(data::Dict, indent_lvl=0, result="")
     indent_str = repeat(' '^2, indent_lvl) # здесь задается размер отступов (^2)
     for item_key in keys(data)
