@@ -1,5 +1,35 @@
-include("Grids.jl")
-using .Grids
+using OffsetArrays
+
+struct Grid{T} <: AbstractVector{T}
+	range::OffsetVector{T,<:AbstractRange{T}}
+	in::Base.OneTo{Int64}
+	h::T
+	N::Int
+	Npc::Int
+	L::T
+	function Grid{T}(L, Nc, Npc) where T
+		h = L / Nc
+		grid = range(-h/2, L+h/2, length=Nc+2)
+      	new{T}(OffsetVector(grid, 0:Nc+1), Base.OneTo(Nc), step(grid), Nc, Npc, L)
+  	end
+end
+Grid(L, Nc, Npc) = Grid{Float64}(L, Nc, Npc)
+Base.size(g::Grid) = size(g.range)
+Base.axes(g::Grid) = axes(g.range)
+Base.IndexStyle(::Type{<:Grid}) = IndexLinear()
+function Base.getindex(g::Grid{T}, i::Int)::T where {T}
+    getindex(g.range, i)
+end
+function Base.step(g::Grid{T})::T where {T}
+    step(g.range)
+end
+
+@inline function (G::Grid)(r)
+    i = unsafe_trunc(Int,r/G.h+0.5)
+    (i, (G[i+1] - r)/G.h)
+end
+
+##
 
 using HDF5
 using LinearAlgebra: diagm
@@ -9,6 +39,46 @@ using OffsetArrays
 
 ## Параметры:
 
+struct Model
+	time::AbstractRange
+	L::Float64
+	Nc::UInt
+	Npc::UInt
+	uˣ::Float64
+	uʸ::Float64
+	uᶻ::Float64
+	ion_bg::Bool
+	init_method::String
+	prestart_steps::UInt
+
+	g::Grid
+end
+
+function Model(time,
+	L,
+	Nc,
+	Npc,
+	uˣ,
+	uʸ,
+	uᶻ,
+	ion_bg,
+	init_method,
+	prestart_steps)
+	
+	Model(time,
+		L,
+		Nc,
+		Npc,
+		uˣ,
+		uʸ,
+		uᶻ,
+		ion_bg,
+		init_method,
+		prestart_steps,
+		Grid(L, Nc, Npc))
+end
+
+#=
 time = 0:0.25:500;
 const L, Nc, Npc = 5.24, 256, 1000;
 const uᶻ = 0.1
@@ -18,36 +88,46 @@ println("A: $((uᶻ/uˣ)^2-1)")
 ion_bg = true;
 init_method = "rand";
 prestart_steps = 200;
-
+=#
 
 begin
 	using CSV
 	using DataFrames
 
-	g = Grids.Grid(L, Nc, Npc)
+	model = Model(0:0.25:500,
+		5.24,
+		256,
+		1000,
+		0.0316,
+		0.0316,
+		0.1,
+		true,
+		"rand",
+		200)
+	println("A: $((model.uᶻ/model.uˣ)^2-1)")
 	
 	dir = isempty(ARGS) ? "test/" : ARGS[1]*"/"
 	mkpath(dir)
 	println("writing to ", abspath(dir))
 
-	parameters = [
-		"T"  last(time)
-		"dt" step(time) # либо ("Nt",length(time))
-		"L"  L
-		"N cells"  Nc
-		"N per cell" Npc
-		"Ux" uˣ
-		"Uy" uʸ
-		"Uz" uᶻ
-		"ion background" string(ion_bg)
-		"init method"    init_method
-		"prestart steps" prestart_steps
-	]
-	info = DataFrame(name=parameters[:,1], val=parameters[:,2])
-	CSV.write(dir*"info.csv", info)
-	foreach(x->println(x[1],":\t",x[2]), eachrow(info))
-	println("particles: ", (1+!ion_bg)*Nc*Npc)
-	info |> println
+	# parameters = [
+	# 	"T"  last(time)
+	# 	"dt" step(time) # либо ("Nt",length(time))
+	# 	"L"  L
+	# 	"N cells"  Nc
+	# 	"N per cell" Npc
+	# 	"Ux" uˣ
+	# 	"Uy" uʸ
+	# 	"Uz" uᶻ
+	# 	"ion background" string(ion_bg)
+	# 	"init method"    init_method
+	# 	"prestart steps" prestart_steps
+	# ]
+	# info = DataFrame(name=parameters[:,1], val=parameters[:,2])
+	# CSV.write(dir*"info.csv", info)
+	# foreach(x->println(x[1],":\t",x[2]), eachrow(info))
+	# println("particles: ", (1+!ion_bg)*Nc*Npc)
+	# info |> println
 end
 
 #step(time)*√(uˣ^2+uʸ^2+uᶻ^2) ≤ L/2Nc
@@ -146,23 +226,23 @@ end
 begin
 	using Distributions
 
-	N = g.Npc*g.N
+	N = model.g.Npc*model.g.N
 
 	space = (:x, :px, :py, :pz)
-	data = zeros((1+!ion_bg)*length(space), N)
+	data = zeros((1+!model.ion_bg)*length(space), N)
 
 	e = particle_set(-1, 1, N, space, data, 1:4)
-	eval(Symbol("init_"*init_method*'!'))(e, g.L, (uˣ,uʸ,uᶻ)./√2..., (2,3,7,5))
+	eval(Symbol("init_"*model.init_method*'!'))(e, model.L, (model.uˣ,model.uʸ,model.uᶻ)./√2..., (2,3,7,5))
 	CSV.write(dir*"init_electron.csv", init_data(e))
 	e.px .*= e.m
 	e.py .*= e.m
 	e.pz .*= e.m
 
 	i = nothing
-if !ion_bg
+if !model.ion_bg
 	i = particle_set(1, 1836, N, space, data, 5:8)
 	K = √(e.m / i.m)
-	eval(Symbol("init_"*init_method*'!'))(i, g.L, (uˣ,uʸ,uᶻ).*(K/√2)..., (2,3,7,5))
+	eval(Symbol("init_"*model.init_method*'!'))(i, model.L, (model.uˣ,model.uʸ,model.uᶻ).*(K/√2)..., (2,3,7,5))
 	CSV.write(dir*"init_ion.csv", init_data(i))
 	i.px .*= i.m
 	i.py .*= i.m
@@ -270,19 +350,19 @@ end
 ## Сетки для источников и полей:
 
 begin
-	ρ = OffsetVector(zeros(g.N+2), 0:g.N+1)
+	ρ = OffsetVector(zeros(model.g.N+2), 0:model.g.N+1)
 	μ = similar(ρ)
 	φ = similar(ρ)
 	Ex = similar(ρ)
-	f = OffsetMatrix(zeros(2,g.N+2), 2:3, 0:g.N+1)
+	f = OffsetMatrix(zeros(2,model.g.N+2), 2:3, 0:model.g.N+1)
 	A = similar(f)
 	B = similar(f)
-	ion_bg || sources!(ρ, μ, f, e, i, g)
-	ion_bg && sources!(ρ, μ, f, e, g)
-	scalar_potential!(φ, ρ, g)
-	gradient!(Ex, φ, g)
+	model.ion_bg || sources!(ρ, μ, f, e, i, model.g)
+	model.ion_bg && sources!(ρ, μ, f, e, model.g)
+	scalar_potential!(φ, ρ, model.g)
+	gradient!(Ex, φ, model.g)
 	Ex *= -1
-	vector_potential!(A, μ, f, g)
+	vector_potential!(A, μ, f, model.g)
 	B .= 0
 end;
 
@@ -334,15 +414,15 @@ end
 
 begin
 	energy = DataFrame()
-	energy.Ke = zeros(length(time))
-	energy.Kex = zeros(length(time))
-	energy.Key = zeros(length(time))
-	energy.Kez = zeros(length(time))
-	energy.A  = zeros(length(time))
-	energy.Ki = zeros(length(time))
-	energy.Ex = zeros(length(time))
-	energy.By = zeros(length(time))
-	energy.Bz = zeros(length(time))
+	energy.Ke = zeros(length(model.time))
+	energy.Kex = zeros(length(model.time))
+	energy.Key = zeros(length(model.time))
+	energy.Kez = zeros(length(model.time))
+	energy.A  = zeros(length(model.time))
+	energy.Ki = zeros(length(model.time))
+	energy.Ex = zeros(length(model.time))
+	energy.By = zeros(length(model.time))
+	energy.Bz = zeros(length(model.time))
 end;
 
 
@@ -373,7 +453,7 @@ function leap_frog!(s, dt, Ex, B, A, g)
 end
 
 
-function prestart!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, u)
+function prestart!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
 	dt = step(time)
 	e.px .*= u/uˣ
 	e.py .*= u/uʸ
@@ -401,7 +481,7 @@ function prestart!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, u)
 end
 
 
-function prestart!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, u)
+function prestart!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
 	dt = step(time)
 	e.px .*= u/uˣ
 	e.py .*= u/uʸ
@@ -540,8 +620,9 @@ function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, energy)
 end
 
 let
-	leap_frog_halfstep!(e, step(time), Ex, g)
-	leap_frog_halfstep!(i, step(time), Ex, g)
-	prestart!(e, i, ρ, μ, f, φ, Ex, B, A, g, time[1:prestart_steps], min(uˣ, uʸ, uᶻ))
-	simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, energy)
+	leap_frog_halfstep!(e, step(model.time), Ex, model.g)
+	leap_frog_halfstep!(i, step(model.time), Ex, model.g)
+	prestart!(e, i, ρ, μ, f, φ, Ex, B, A, model.g, model.time[1:model.prestart_steps],
+		min(model.uˣ, model.uʸ, model.uᶻ), (model.uˣ, model.uʸ, model.uᶻ))
+	simulation!(e, i, ρ, μ, f, φ, Ex, B, A, model.g, model.time, energy)
 end
