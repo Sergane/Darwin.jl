@@ -78,17 +78,6 @@ function Model(time,
 		Grid(L, Nc, Npc))
 end
 
-#=
-time = 0:0.25:500;
-const L, Nc, Npc = 5.24, 256, 1000;
-const uᶻ = 0.1
-const uˣ = uʸ = 0.0316
-println("A: $((uᶻ/uˣ)^2-1)")
-
-ion_bg = true;
-init_method = "rand";
-prestart_steps = 200;
-=#
 
 begin
 	using CSV
@@ -110,24 +99,9 @@ begin
 	mkpath(dir)
 	println("writing to ", abspath(dir))
 
-	# parameters = [
-	# 	"T"  last(time)
-	# 	"dt" step(time) # либо ("Nt",length(time))
-	# 	"L"  L
-	# 	"N cells"  Nc
-	# 	"N per cell" Npc
-	# 	"Ux" uˣ
-	# 	"Uy" uʸ
-	# 	"Uz" uᶻ
-	# 	"ion background" string(ion_bg)
-	# 	"init method"    init_method
-	# 	"prestart steps" prestart_steps
-	# ]
-	# info = DataFrame(name=parameters[:,1], val=parameters[:,2])
-	# CSV.write(dir*"info.csv", info)
-	# foreach(x->println(x[1],":\t",x[2]), eachrow(info))
-	# println("particles: ", (1+!ion_bg)*Nc*Npc)
-	# info |> println
+	# TODO:
+	# разбить модель на независимые абстракции
+	# вывести здесь параметры модели 
 end
 
 #step(time)*√(uˣ^2+uʸ^2+uᶻ^2) ≤ L/2Nc
