@@ -80,10 +80,7 @@ end
 
 
 begin
-	using CSV
-	using DataFrames
-
-	model = Model(0:0.25:500,
+	model = Model(0:0.25:50,
 		5.24,
 		256,
 		1000,
@@ -92,7 +89,7 @@ begin
 		0.1,
 		true,
 		"rand",
-		200)
+		50)
 	println("A: $((model.uᶻ/model.uˣ)^2-1)")
 	
 	dir = isempty(ARGS) ? "test/" : ARGS[1]*"/"
@@ -138,15 +135,6 @@ function boundary_condition!(field)
 end
 
 ## Частицы и их начальное распределение:
-
-function init_data(s)
-	data = DataFrame()
-	data.x = s.x
-	data.Vx = s.px
-	data.Vy = s.py
-	data.Vz = s.pz
-	data
-end
 
 function hammersley(p, N)
 	# p - простое число
@@ -197,27 +185,55 @@ function particle_set(q, m, N, space, data, range)
 		:q=>q, :m=>m, :N=>N)
 end
 
+struct ParticleSet{T}
+	x::Vector{T}
+	px::Vector{T}
+	py::Vector{T}
+	pz::Vector{T}
+	q::Float64
+	m::Float64
+	N::UInt
+
+	function ParticleSet{T}(q, m, N) where {T<:Real}
+		new(zeros(T,N),
+			zeros(T,N),
+			zeros(T,N),
+			zeros(T,N),
+			q, m, N)
+	end
+end
+
 begin
 	using Distributions
 
 	N = model.g.Npc*model.g.N
 
-	space = (:x, :px, :py, :pz)
-	data = zeros((1+!model.ion_bg)*length(space), N)
-
-	e = particle_set(-1, 1, N, space, data, 1:4)
+	e = ParticleSet{Float64}(-1, 1, N)
 	eval(Symbol("init_"*model.init_method*'!'))(e, model.L, (model.uˣ,model.uʸ,model.uᶻ)./√2..., (2,3,7,5))
-	CSV.write(dir*"init_electron.csv", init_data(e))
+
+	h5open(dir*"init_electron.h5", "w") do file
+		write(file, "X", e.x)
+		write(file, "Px", e.px)
+		write(file, "Py", e.py)
+		write(file, "Pz", e.pz)
+	end
+
 	e.px .*= e.m
 	e.py .*= e.m
 	e.pz .*= e.m
 
 	i = nothing
 if !model.ion_bg
-	i = particle_set(1, 1836, N, space, data, 5:8)
+	i = ParticleSet{Float64}(1, 1836, N)
 	K = √(e.m / i.m)
 	eval(Symbol("init_"*model.init_method*'!'))(i, model.L, (model.uˣ,model.uʸ,model.uᶻ).*(K/√2)..., (2,3,7,5))
-	CSV.write(dir*"init_ion.csv", init_data(i))
+
+	h5open(dir*"init_ion.h5", "w") do file
+		write(file, "X", i.x)
+		write(file, "Px", i.px)
+		write(file, "Py", i.py)
+		write(file, "Pz", i.pz)
+	end
 	i.px .*= i.m
 	i.py .*= i.m
 	i.pz .*= i.m
@@ -386,18 +402,21 @@ function current_densities!(Jx, Jy, Jz, A, e, g)
 	boundary_condition!(Jz)
 end
 
-begin
-	energy = DataFrame()
-	energy.Ke = zeros(length(model.time))
-	energy.Kex = zeros(length(model.time))
-	energy.Key = zeros(length(model.time))
-	energy.Kez = zeros(length(model.time))
-	energy.A  = zeros(length(model.time))
-	energy.Ki = zeros(length(model.time))
-	energy.Ex = zeros(length(model.time))
-	energy.By = zeros(length(model.time))
-	energy.Bz = zeros(length(model.time))
-end;
+struct Energies{T}
+	K::Vector{T}
+	Kx::Vector{T}
+	Ky::Vector{T}
+	Kz::Vector{T}
+	A::Vector{T}  # показатель анизотропии
+	Ex::Vector{T}
+	By::Vector{T}
+	Bz::Vector{T}
+
+	function Energies{T}(N::Int) where {T<:Real}
+		arrays = [zeros(T,N) for i in 1:fieldcount(Energies)]
+		new(arrays...)
+	end
+end
 
 
 @inline it(E, l, j) = (l*E[j]+(1-l)*E[j+1])
@@ -476,7 +495,7 @@ function prestart!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, u, (uˣ,uʸ,u
 end
 
 
-function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, energy)
+function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time)
 	fields_rho = zeros(g.N, length(time))
 	fields_phi = zeros(g.N, length(time))
 	fields_Ay = zeros(g.N, length(time))
@@ -484,6 +503,8 @@ function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, energy)
 	fields_Ex = zeros(g.N, length(time))
 	fields_By = zeros(g.N, length(time))
 	fields_Bz = zeros(g.N, length(time))
+	energy = Energies{Float64}(length(model.time))
+	Ki = zeros(length(model.time))
 	dt = step(time)
 	@showprogress 1 "Computing..." for t in eachindex(time)
 		sources!(ρ, μ, f, e, i, g)
@@ -496,12 +517,12 @@ function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, energy)
 		leap_frog!(i, dt, Ex, B, A, g)
 		# сбор данных
 		Kx, Ky, Kz = kinetic_energy(e, A, g)
-		energy.Ke[t] = Kx+Ky+Kz
-		energy.Kex[t] = Kx
-		energy.Key[t] = Ky
-		energy.Kez[t] = Kz
+		energy.K[t] = Kx+Ky+Kz
+		energy.Kx[t] = Kx
+		energy.Ky[t] = Ky
+		energy.Kz[t] = Kz
 		energy.A[t] = 2Kz/(Kx+Ky) - 1
-		energy.Ki[t] = sum(kinetic_energy(i, A, g))
+		Ki[t] = sum(kinetic_energy(i, A, g))
 		energy.Ex[t] = field_energy(Ex, g)
 		energy.By[t] = field_energy(B, 2, g)
 		energy.Bz[t] = field_energy(B, 3, g)
@@ -514,7 +535,11 @@ function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, energy)
 		fields_Bz[:,t] .= B[3,g.in]
 	end
 	
-	CSV.write(dir*"energy.csv", energy)
+	h5open(dir*"energies.h5", "w") do file
+		for prop_name in propertynames(energy)
+			write(file, string(prop_name), getfield(energy, prop_name))
+		end
+	end
 	h5open(dir*"fields.h5", "w") do file
 		write(file, "rho", fields_rho)
 		write(file, "phi", fields_phi)
@@ -528,7 +553,7 @@ function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, energy)
 end
 
 
-function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, energy)
+function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time)
 	Jx = similar(ρ)
 	Jy = similar(ρ)
 	Jz = similar(ρ)
@@ -542,6 +567,8 @@ function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, energy)
 	fields_Ex = zeros(g.N, length(time))
 	fields_By = zeros(g.N, length(time))
 	fields_Bz = zeros(g.N, length(time))
+	energy = Energies{Float64}(length(model.time))
+	Ki = zeros(length(model.time))
 	dt = step(time)
 	@showprogress 1 "Computing..." for t in eachindex(time)
 		sources!(ρ, μ, f, e, g)
@@ -554,10 +581,10 @@ function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, energy)
 		leap_frog!(e, dt, Ex, B, A, g)
 		# сбор данных
 		Kx, Ky, Kz = kinetic_energy(e, A, g)
-		energy.Ke[t] = Kx+Ky+Kz
-		energy.Kex[t] = Kx
-		energy.Key[t] = Ky
-		energy.Kez[t] = Kz
+		energy.K[t] = Kx+Ky+Kz
+		energy.Kx[t] = Kx
+		energy.Ky[t] = Ky
+		energy.Kz[t] = Kz
 		energy.A[t] = 2Kz/(Kx+Ky) - 1
 		energy.Ex[t] = field_energy(Ex, g)
 		energy.By[t] = field_energy(B, 2, g)
@@ -577,7 +604,11 @@ function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, energy)
 		fields_Bz[:,t] .= B[3,g.in]
 	end
 	
-	CSV.write(dir*"energy.csv", energy)
+	h5open(dir*"energies.h5", "w") do file
+		for prop_name in propertynames(energy)
+			write(file, string(prop_name), getfield(energy, prop_name))
+		end
+	end
 	h5open(dir*"fields.h5", "w") do file
 		write(file, "rho", fields_rho)
 		write(file, "Jx", fields_rho)
@@ -598,5 +629,5 @@ let
 	leap_frog_halfstep!(i, step(model.time), Ex, model.g)
 	prestart!(e, i, ρ, μ, f, φ, Ex, B, A, model.g, model.time[1:model.prestart_steps],
 		min(model.uˣ, model.uʸ, model.uᶻ), (model.uˣ, model.uʸ, model.uᶻ))
-	simulation!(e, i, ρ, μ, f, φ, Ex, B, A, model.g, model.time, energy)
+	simulation!(e, i, ρ, μ, f, φ, Ex, B, A, model.g, model.time)
 end
