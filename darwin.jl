@@ -37,72 +37,6 @@ using ProgressMeter
 using SpecialFunctions: erfinv
 using OffsetArrays
 
-## Параметры:
-
-struct Model
-	time::AbstractRange
-	L::Float64
-	Nc::UInt
-	Npc::UInt
-	uˣ::Float64
-	uʸ::Float64
-	uᶻ::Float64
-	ion_bg::Bool
-	init_method::String
-	prestart_steps::UInt
-
-	g::Grid
-end
-
-function Model(time,
-	L,
-	Nc,
-	Npc,
-	uˣ,
-	uʸ,
-	uᶻ,
-	ion_bg,
-	init_method,
-	prestart_steps)
-	
-	Model(time,
-		L,
-		Nc,
-		Npc,
-		uˣ,
-		uʸ,
-		uᶻ,
-		ion_bg,
-		init_method,
-		prestart_steps,
-		Grid(L, Nc, Npc))
-end
-
-
-begin
-	model = Model(0:0.25:50,
-		5.24,
-		256,
-		1000,
-		0.0316,
-		0.0316,
-		0.1,
-		true,
-		"rand",
-		50)
-	println("A: $((model.uᶻ/model.uˣ)^2-1)")
-	
-	dir = isempty(ARGS) ? "test/" : ARGS[1]*"/"
-	mkpath(dir)
-	println("writing to ", abspath(dir))
-
-	# TODO:
-	# разбить модель на независимые абстракции
-	# вывести здесь параметры модели 
-end
-
-#step(time)*√(uˣ^2+uʸ^2+uᶻ^2) ≤ L/2Nc
-
 ## Сетка:
 
 # @inline 
@@ -203,42 +137,6 @@ struct ParticleSet{T}
 	end
 end
 
-begin
-	using Distributions
-
-	N = model.g.Npc*model.g.N
-
-	e = ParticleSet{Float64}(-1, 1, N)
-	eval(Symbol("init_"*model.init_method*'!'))(e, model.L, (model.uˣ,model.uʸ,model.uᶻ)./√2..., (2,3,7,5))
-
-	h5open(dir*"init_electron.h5", "w") do file
-		write(file, "X", e.x)
-		write(file, "Px", e.px)
-		write(file, "Py", e.py)
-		write(file, "Pz", e.pz)
-	end
-
-	e.px .*= e.m
-	e.py .*= e.m
-	e.pz .*= e.m
-
-	i = nothing
-if !model.ion_bg
-	i = ParticleSet{Float64}(1, 1836, N)
-	K = √(e.m / i.m)
-	eval(Symbol("init_"*model.init_method*'!'))(i, model.L, (model.uˣ,model.uʸ,model.uᶻ).*(K/√2)..., (2,3,7,5))
-
-	h5open(dir*"init_ion.h5", "w") do file
-		write(file, "X", i.x)
-		write(file, "Px", i.px)
-		write(file, "Py", i.py)
-		write(file, "Pz", i.pz)
-	end
-	i.px .*= i.m
-	i.py .*= i.m
-	i.pz .*= i.m
-end
-end;
 
 function sources!(ρ, μ, f, e, i, g)
 	ρ .= 0
@@ -337,24 +235,6 @@ function curl!(B, A, g)
     interpolation_bc!(B,3)
 end
 
-## Сетки для источников и полей:
-
-begin
-	ρ = OffsetVector(zeros(model.g.N+2), 0:model.g.N+1)
-	μ = similar(ρ)
-	φ = similar(ρ)
-	Ex = similar(ρ)
-	f = OffsetMatrix(zeros(2,model.g.N+2), 2:3, 0:model.g.N+1)
-	A = similar(f)
-	B = similar(f)
-	model.ion_bg || sources!(ρ, μ, f, e, i, model.g)
-	model.ion_bg && sources!(ρ, μ, f, e, model.g)
-	scalar_potential!(φ, ρ, model.g)
-	gradient!(Ex, φ, model.g)
-	Ex *= -1
-	vector_potential!(A, μ, f, model.g)
-	B .= 0
-end;
 
 begin
 function field_energy(f, g)
@@ -512,10 +392,10 @@ struct Fields{T}
 	end
 end
 
-function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time)
-	field = Fields{Float64}(g.N, length(model.time))
-	energy = Energies{Float64}(length(model.time))
-	Ki = zeros(length(model.time))
+function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, dir)
+	field = Fields{Float64}(g.N, length(time))
+	energy = Energies{Float64}(length(time))
+	Ki = zeros(length(time))
 	dt = step(time)
 	@showprogress 1 "Computing..." for t in eachindex(time)
 		sources!(ρ, μ, f, e, i, g)
@@ -560,13 +440,13 @@ function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time)
 end
 
 
-function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time)
+function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, dir)
 	Jx = similar(ρ)
 	Jy = similar(ρ)
 	Jz = similar(ρ)
-	field = Fields{Float64}(g.N, length(model.time))
-	energy = Energies{Float64}(length(model.time))
-	Ki = zeros(length(model.time))
+	field = Fields{Float64}(g.N, length(time))
+	energy = Energies{Float64}(length(time))
+	Ki = zeros(length(time))
 	dt = step(time)
 	@showprogress 1 "Computing..." for t in eachindex(time)
 		sources!(ρ, μ, f, e, g)
@@ -615,10 +495,125 @@ function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time)
 	return
 end
 
+
+## Параметры:
+
+struct Model
+	time::AbstractRange
+	L::Float64
+	Nc::UInt
+	Npc::UInt
+	uˣ::Float64
+	uʸ::Float64
+	uᶻ::Float64
+	ion_bg::Bool
+	init_method::String
+	prestart_steps::UInt
+
+	g::Grid
+end
+
+function Model(time,
+	L,
+	Nc,
+	Npc,
+	uˣ,
+	uʸ,
+	uᶻ,
+	ion_bg,
+	init_method,
+	prestart_steps)
+	
+	Model(time,
+		L,
+		Nc,
+		Npc,
+		uˣ,
+		uʸ,
+		uᶻ,
+		ion_bg,
+		init_method,
+		prestart_steps,
+		Grid(L, Nc, Npc))
+end
+
+
 let
+	model = Model(0:0.25:50,
+		5.24,
+		256,
+		1000,
+		0.0316,
+		0.0316,
+		0.1,
+		false,
+		"rand",
+		50)
+	println("A: $((model.uᶻ/model.uˣ)^2-1)")
+	
+	dir = isempty(ARGS) ? "test/" : ARGS[1]*"/"
+	mkpath(dir)
+	println("writing to ", abspath(dir))
+
+	# TODO:
+	# разбить модель на независимые абстракции
+	# вывести здесь параметры модели 
+
+	#step(time)*√(uˣ^2+uʸ^2+uᶻ^2) ≤ L/2Nc
+
+	using Distributions
+
+	N = model.g.Npc*model.g.N
+
+	e = ParticleSet{Float64}(-1, 1, N)
+	eval(Symbol("init_"*model.init_method*'!'))(e, model.L, (model.uˣ,model.uʸ,model.uᶻ)./√2..., (2,3,7,5))
+
+	h5open(dir*"init_electron.h5", "w") do file
+		write(file, "X", e.x)
+		write(file, "Px", e.px)
+		write(file, "Py", e.py)
+		write(file, "Pz", e.pz)
+	end
+
+	e.px .*= e.m
+	e.py .*= e.m
+	e.pz .*= e.m
+
+	i = nothing
+if !model.ion_bg
+	i = ParticleSet{Float64}(1, 1836, N)
+	K = √(e.m / i.m)
+	eval(Symbol("init_"*model.init_method*'!'))(i, model.L, (model.uˣ,model.uʸ,model.uᶻ).*(K/√2)..., (2,3,7,5))
+
+	h5open(dir*"init_ion.h5", "w") do file
+		write(file, "X", i.x)
+		write(file, "Px", i.px)
+		write(file, "Py", i.py)
+		write(file, "Pz", i.pz)
+	end
+	i.px .*= i.m
+	i.py .*= i.m
+	i.pz .*= i.m
+end
+
+	ρ = OffsetVector(zeros(model.g.N+2), 0:model.g.N+1)
+	μ = similar(ρ)
+	φ = similar(ρ)
+	Ex = similar(ρ)
+	f = OffsetMatrix(zeros(2,model.g.N+2), 2:3, 0:model.g.N+1)
+	A = similar(f)
+	B = similar(f)
+	model.ion_bg || sources!(ρ, μ, f, e, i, model.g)
+	model.ion_bg && sources!(ρ, μ, f, e, model.g)
+	scalar_potential!(φ, ρ, model.g)
+	gradient!(Ex, φ, model.g)
+	Ex *= -1
+	vector_potential!(A, μ, f, model.g)
+	B .= 0
+
 	leap_frog_halfstep!(e, step(model.time), Ex, model.g)
 	leap_frog_halfstep!(i, step(model.time), Ex, model.g)
 	prestart!(e, i, ρ, μ, f, φ, Ex, B, A, model.g, model.time[1:model.prestart_steps],
 		min(model.uˣ, model.uʸ, model.uᶻ), (model.uˣ, model.uʸ, model.uᶻ))
-	simulation!(e, i, ρ, μ, f, φ, Ex, B, A, model.g, model.time)
+	simulation!(e, i, ρ, μ, f, φ, Ex, B, A, model.g, model.time, dir)
 end
