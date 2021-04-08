@@ -529,6 +529,36 @@ function Model(time,
 		Grid(L, Nc, Npc))
 end
 
+# минимальная модель, необходимая для вычисления одной итерации
+struct NumericalModel
+	g::Grid
+	ρ::OffsetVector
+	μ::OffsetVector
+	φ::OffsetVector
+	Ex::OffsetVector
+	f::OffsetMatrix
+	A::OffsetMatrix
+	B::OffsetMatrix
+end
+
+function NumericalModel(g::Grid)
+	ρ = OffsetVector(zeros(g.N+2), 0:g.N+1)
+	μ = similar(ρ)
+	φ = similar(ρ)
+	Ex = similar(ρ)
+	f = OffsetMatrix(zeros(2,g.N+2), 2:3, 0:g.N+1)
+	A = similar(f)
+	B = similar(f)
+	
+	NumericalModel(g,
+		ρ,
+		μ,
+		φ,
+		Ex,
+		f,
+		A,
+		B)
+end
 
 let
 	model = Model(0:0.25:50,
@@ -555,7 +585,7 @@ let
 
 	using Distributions
 
-	N = model.g.Npc*model.g.N
+	N = model.g.Npc*model.g.N  # количество модельных частиц
 
 	e = ParticleSet{Float64}(-1, 1, N)
 	eval(Symbol("init_"*model.init_method*'!'))(e, model.L, (model.uˣ,model.uʸ,model.uᶻ)./√2..., (2,3,7,5))
@@ -577,24 +607,18 @@ if !model.ion_bg
 	write_SoA(dir*"init_ion.h5", i)
 end
 
-	ρ = OffsetVector(zeros(model.g.N+2), 0:model.g.N+1)
-	μ = similar(ρ)
-	φ = similar(ρ)
-	Ex = similar(ρ)
-	f = OffsetMatrix(zeros(2,model.g.N+2), 2:3, 0:model.g.N+1)
-	A = similar(f)
-	B = similar(f)
-	model.ion_bg || sources!(ρ, μ, f, e, i, model.g)
-	model.ion_bg && sources!(ρ, μ, f, e, model.g)
-	scalar_potential!(φ, ρ, model.g)
-	gradient!(Ex, φ, model.g)
-	Ex *= -1
-	vector_potential!(A, μ, f, model.g)
-	B .= 0
+	num_model = NumericalModel(model.g)
+	model.ion_bg || sources!(num_model.ρ, num_model.μ, num_model.f, e, i, model.g)
+	model.ion_bg && sources!(num_model.ρ, num_model.μ, num_model.f, e, model.g)
+	scalar_potential!(num_model.φ, num_model.ρ, model.g)
+	gradient!(num_model.Ex, num_model.φ, model.g)
+	num_model.Ex .*= -1
+	vector_potential!(num_model.A, num_model.μ, num_model.f, model.g)
+	num_model.B .= 0
 
-	leap_frog_halfstep!(e, step(model.time), Ex, model.g)
-	leap_frog_halfstep!(i, step(model.time), Ex, model.g)
-	prestart!(e, i, ρ, μ, f, φ, Ex, B, A, model.g, model.time[1:model.prestart_steps],
+	leap_frog_halfstep!(e, step(model.time), num_model.Ex, model.g)
+	leap_frog_halfstep!(i, step(model.time), num_model.Ex, model.g)
+	prestart!(e, i, num_model.ρ, num_model.μ, num_model.f,num_model.φ, num_model.Ex, num_model.B, num_model.A, model.g, model.time[1:model.prestart_steps],
 		min(model.uˣ, model.uʸ, model.uᶻ), (model.uˣ, model.uʸ, model.uᶻ))
-	simulation!(e, i, ρ, μ, f, φ, Ex, B, A, model.g, model.time, dir)
+	simulation!(e, i, num_model.ρ, num_model.μ, num_model.f, num_model.φ, num_model.Ex, num_model.B, num_model.A, model.g, model.time, dir)
 end
