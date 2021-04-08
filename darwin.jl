@@ -392,6 +392,14 @@ struct Fields{T}
 	end
 end
 
+function write_SoA(dir, obj)
+	h5open(dir, "w") do file
+		for prop_name in propertynames(obj)
+			write(file, string(prop_name), getfield(obj, prop_name))
+		end
+	end
+end
+
 function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, dir)
 	field = Fields{Float64}(g.N, length(time))
 	energy = Energies{Float64}(length(time))
@@ -426,16 +434,8 @@ function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, dir)
 		field.Bz[:,t] .= B[3,g.in]
 	end
 	
-	h5open(dir*"energies.h5", "w") do file
-		for prop_name in propertynames(energy)
-			write(file, string(prop_name), getfield(energy, prop_name))
-		end
-	end
-	h5open(dir*"fields.h5", "w") do file
-		for prop_name in propertynames(field)
-			write(file, string(prop_name), getfield(field, prop_name))
-		end
-	end
+	write_SoA(dir*"energies.h5", energy)
+	write_SoA(dir*"fields.h5", field)
 	return
 end
 
@@ -482,16 +482,8 @@ function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, dir)
 		field.Bz[:,t] .= B[3,g.in]
 	end
 	
-	h5open(dir*"energies.h5", "w") do file
-		for prop_name in propertynames(energy)
-			write(file, string(prop_name), getfield(energy, prop_name))
-		end
-	end
-	h5open(dir*"fields.h5", "w") do file
-		for prop_name in propertynames(field)
-			write(file, string(prop_name), getfield(field, prop_name))
-		end
-	end
+	write_SoA(dir*"energies.h5", energy)
+	write_SoA(dir*"fields.h5", field)
 	return
 end
 
@@ -567,33 +559,22 @@ let
 
 	e = ParticleSet{Float64}(-1, 1, N)
 	eval(Symbol("init_"*model.init_method*'!'))(e, model.L, (model.uˣ,model.uʸ,model.uᶻ)./√2..., (2,3,7,5))
-
-	h5open(dir*"init_electron.h5", "w") do file
-		write(file, "X", e.x)
-		write(file, "Px", e.px)
-		write(file, "Py", e.py)
-		write(file, "Pz", e.pz)
-	end
-
 	e.px .*= e.m
 	e.py .*= e.m
 	e.pz .*= e.m
+
+	write_SoA(dir*"init_electron.h5", e)
 
 	i = nothing
 if !model.ion_bg
 	i = ParticleSet{Float64}(1, 1836, N)
 	K = √(e.m / i.m)
 	eval(Symbol("init_"*model.init_method*'!'))(i, model.L, (model.uˣ,model.uʸ,model.uᶻ).*(K/√2)..., (2,3,7,5))
-
-	h5open(dir*"init_ion.h5", "w") do file
-		write(file, "X", i.x)
-		write(file, "Px", i.px)
-		write(file, "Py", i.py)
-		write(file, "Pz", i.pz)
-	end
 	i.px .*= i.m
 	i.py .*= i.m
 	i.pz .*= i.m
+
+	write_SoA(dir*"init_ion.h5", i)
 end
 
 	ρ = OffsetVector(zeros(model.g.N+2), 0:model.g.N+1)
