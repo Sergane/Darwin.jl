@@ -402,22 +402,6 @@ function current_densities!(Jx, Jy, Jz, A, e, g)
 	boundary_condition!(Jz)
 end
 
-struct Energies{T}
-	K::Vector{T}
-	Kx::Vector{T}
-	Ky::Vector{T}
-	Kz::Vector{T}
-	A::Vector{T}  # показатель анизотропии
-	Ex::Vector{T}
-	By::Vector{T}
-	Bz::Vector{T}
-
-	function Energies{T}(N::Int) where {T<:Real}
-		arrays = [zeros(T,N) for i in 1:fieldcount(Energies)]
-		new(arrays...)
-	end
-end
-
 
 @inline it(E, l, j) = (l*E[j]+(1-l)*E[j+1])
 @inline it(A, l, i, j) = (l*A[i,j]+(1-l)*A[i,j+1])
@@ -494,15 +478,42 @@ function prestart!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, u, (uˣ,uʸ,u
 	return
 end
 
+struct Energies{T}
+	K::Vector{T}
+	Kx::Vector{T}
+	Ky::Vector{T}
+	Kz::Vector{T}
+	A::Vector{T}  # показатель анизотропии
+	Ex::Vector{T}
+	By::Vector{T}
+	Bz::Vector{T}
+
+	function Energies{T}(N::Int) where {T<:Real}
+		arrays = [zeros(T,N) for i in 1:fieldcount(Energies)]
+		new(arrays...)
+	end
+end
+
+struct Fields{T}
+	rho::Matrix{T}
+	phi::Matrix{T}
+	Ay::Matrix{T}  # векторный потенциал
+	Az::Matrix{T}
+	Ex::Matrix{T}
+	By::Matrix{T}
+	Bz::Matrix{T}
+	Jx::Matrix{T}
+	Jy::Matrix{T}
+	Jz::Matrix{T}
+
+	function Fields{T}(M, N) where {T<:Real}
+		arrays = [zeros(T,M,N) for i in 1:fieldcount(Fields)]
+		new(arrays...)
+	end
+end
 
 function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time)
-	fields_rho = zeros(g.N, length(time))
-	fields_phi = zeros(g.N, length(time))
-	fields_Ay = zeros(g.N, length(time))
-	fields_Az = zeros(g.N, length(time))
-	fields_Ex = zeros(g.N, length(time))
-	fields_By = zeros(g.N, length(time))
-	fields_Bz = zeros(g.N, length(time))
+	field = Fields{Float64}(g.N, length(model.time))
 	energy = Energies{Float64}(length(model.time))
 	Ki = zeros(length(model.time))
 	dt = step(time)
@@ -526,13 +537,13 @@ function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time)
 		energy.Ex[t] = field_energy(Ex, g)
 		energy.By[t] = field_energy(B, 2, g)
 		energy.Bz[t] = field_energy(B, 3, g)
-		fields_rho[:,t] .= ρ[g.in]
-		fields_phi[:,t] .= φ[g.in]
-		fields_Ay[:,t] .= A[2,g.in]
-		fields_Az[:,t] .= A[3,g.in]
-		fields_Ex[:,t] .= Ex[g.in]
-		fields_By[:,t] .= B[2,g.in]
-		fields_Bz[:,t] .= B[3,g.in]
+		field.rho[:,t] .= ρ[g.in]
+		field.phi[:,t] .= φ[g.in]
+		field.Ay[:,t] .= A[2,g.in]
+		field.Az[:,t] .= A[3,g.in]
+		field.Ex[:,t] .= Ex[g.in]
+		field.By[:,t] .= B[2,g.in]
+		field.Bz[:,t] .= B[3,g.in]
 	end
 	
 	h5open(dir*"energies.h5", "w") do file
@@ -541,13 +552,9 @@ function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time)
 		end
 	end
 	h5open(dir*"fields.h5", "w") do file
-		write(file, "rho", fields_rho)
-		write(file, "phi", fields_phi)
-		write(file, "Ay", fields_Ay)
-		write(file, "Az", fields_Az)
-		write(file, "Ex", fields_Ex)
-		write(file, "By", fields_By)
-		write(file, "Bz", fields_Bz)
+		for prop_name in propertynames(field)
+			write(file, string(prop_name), getfield(field, prop_name))
+		end
 	end
 	return
 end
@@ -557,16 +564,7 @@ function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time)
 	Jx = similar(ρ)
 	Jy = similar(ρ)
 	Jz = similar(ρ)
-	fields_rho = zeros(g.N, length(time))
-	fields_Jx = zeros(g.N, length(time))
-	fields_Jy = zeros(g.N, length(time))
-	fields_Jz = zeros(g.N, length(time))
-	fields_phi = zeros(g.N, length(time))
-	fields_Ay = zeros(g.N, length(time))
-	fields_Az = zeros(g.N, length(time))
-	fields_Ex = zeros(g.N, length(time))
-	fields_By = zeros(g.N, length(time))
-	fields_Bz = zeros(g.N, length(time))
+	field = Fields{Float64}(g.N, length(model.time))
 	energy = Energies{Float64}(length(model.time))
 	Ki = zeros(length(model.time))
 	dt = step(time)
@@ -592,16 +590,16 @@ function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time)
 		# fields_time[t] = t
 		# fields_Jy[:,t] .= f[2,g.in] .- μ[g.in].*A[2,g.in]
 		# fields_Jz[:,t] .= f[3,g.in] .- μ[g.in].*A[3,g.in]
-		fields_Jx[:,t] .= Jx[g.in]
-		fields_Jy[:,t] .= Jy[g.in]
-		fields_Jz[:,t] .= Jz[g.in]
-		fields_rho[:,t] .= ρ[g.in]
-		fields_phi[:,t] .= φ[g.in]
-		fields_Ay[:,t] .= A[2,g.in]
-		fields_Az[:,t] .= A[3,g.in]
-		fields_Ex[:,t] .= Ex[g.in]
-		fields_By[:,t] .= B[2,g.in]
-		fields_Bz[:,t] .= B[3,g.in]
+		field.Jx[:,t] .= Jx[g.in]
+		field.Jy[:,t] .= Jy[g.in]
+		field.Jz[:,t] .= Jz[g.in]
+		field.rho[:,t] .= ρ[g.in]
+		field.phi[:,t] .= φ[g.in]
+		field.Ay[:,t] .= A[2,g.in]
+		field.Az[:,t] .= A[3,g.in]
+		field.Ex[:,t] .= Ex[g.in]
+		field.By[:,t] .= B[2,g.in]
+		field.Bz[:,t] .= B[3,g.in]
 	end
 	
 	h5open(dir*"energies.h5", "w") do file
@@ -610,16 +608,9 @@ function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time)
 		end
 	end
 	h5open(dir*"fields.h5", "w") do file
-		write(file, "rho", fields_rho)
-		write(file, "Jx", fields_rho)
-		write(file, "Jy", fields_rho)
-		write(file, "Jz", fields_rho)
-		write(file, "phi", fields_phi)
-		write(file, "Ay", fields_Ay)
-		write(file, "Az", fields_Az)
-		write(file, "Ex", fields_Ex)
-		write(file, "By", fields_By)
-		write(file, "Bz", fields_Bz)
+		for prop_name in propertynames(field)
+			write(file, string(prop_name), getfield(field, prop_name))
+		end
 	end
 	return
 end
