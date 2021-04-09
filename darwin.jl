@@ -140,10 +140,11 @@ struct ParticleSet{T}
 end
 
 
-function sources!(ρ, μ, f, e, i, g)
+function sources!(ρ, μ, fy, fz, e, i, g)
 	ρ .= 0
 	μ .= 0
-	f .= 0
+	fy .= 0
+	fz .= 0
 	for s in (e, i)
 		m = s.m
 		q = s.q
@@ -156,22 +157,24 @@ function sources!(ρ, μ, f, e, i, g)
 			ρ[j+1] += r*q
 			μ[j]   += l*q^2/m
 			μ[j+1] += r*q^2/m
-			f[2,j] 	 += l*q/m*s.py[k]
-			f[2,j+1] += r*q/m*s.py[k]
-			f[3,j]   += l*q/m*s.pz[k]
-			f[3,j+1] += r*q/m*s.pz[k]
+			fy[j]   += l*q/m*s.py[k]
+			fy[j+1] += r*q/m*s.py[k]
+			fz[j]   += l*q/m*s.pz[k]
+			fz[j+1] += r*q/m*s.pz[k]
 		end # хранить сетки рядом?
 	end
 	boundary_condition!(ρ)
 	boundary_condition!(μ)
-	boundary_condition!(f)
+	boundary_condition!(fy)
+	boundary_condition!(fz)
 	interpolation_bc!(ρ)
 end
 
-function sources!(ρ, μ, f, e, g)
+function sources!(ρ, μ, fy, fz, e, g)
 	ρ .= 0
 	μ .= 0
-	f .= 0
+	fy .= 0
+	fz .= 0
 	m = e.m
 	q = e.q
 	@inbounds for k in 1:e.N
@@ -181,18 +184,20 @@ function sources!(ρ, μ, f, e, g)
 		r /= g.Npc
 		ρ[j]   += l
 		ρ[j+1] += r
-		f[2,j] 	 += l*e.py[k]
-		f[2,j+1] += r*e.py[k]
-		f[3,j]   += l*e.pz[k]
-		f[3,j+1] += r*e.pz[k]
+		fy[j] 	+= l*e.py[k]
+		fy[j+1] += r*e.py[k]
+		fz[j]   += l*e.pz[k]
+		fz[j+1] += r*e.pz[k]
 	end
 	ρ .*= q
 	μ .= ρ.*(q/m)
-	f .*= q/m
+	fy .*= q/m
+	fz .*= q/m
 	boundary_condition!(ρ)
 	ρ .-= e.q  # ионный фон
 	boundary_condition!(μ)
-	boundary_condition!(f)
+	boundary_condition!(fy)
+	boundary_condition!(fz)
 	interpolation_bc!(ρ)
 end
 
@@ -217,24 +222,24 @@ function gradient!(to, f, g)
     interpolation_bc!(to)
 end
 
-function vector_potential!(A, μ, f, g)
+function vector_potential!(A, g)
 	N = g.N
 	h² = g.h^2
-    M = diagm(0=>-h².*μ[1:N].-2, 1=>ones(N-1), -1=>ones(N-1))
+    M = diagm(0=>-h².*A.μ[1:N].-2, 1=>ones(N-1), -1=>ones(N-1))
 	M[N,1] = M[1,N] = 1
-    A[2,1:N] .= M \ (-h²*f[2,1:N])
-    A[3,1:N] .= M \ (-h²*f[3,1:N])
-	interpolation_bc!(A,2)
-	interpolation_bc!(A,3)
+	A.y[1:N] .= M \ (-h²*A.fy[1:N])
+	A.z[1:N] .= M \ (-h²*A.fz[1:N])
+	interpolation_bc!(A.y)
+	interpolation_bc!(A.z)
 end
 
 function curl!(B, A, g)
     for k in g.in
-        B[2,k] = -(A[3,k+1]-A[3,k-1]) / 2g.h
-        B[3,k] =  (A[2,k+1]-A[2,k-1]) / 2g.h
+        B.y[k] = -(A.z[k+1]-A.z[k-1]) / 2g.h
+        B.z[k] =  (A.y[k+1]-A.y[k-1]) / 2g.h
     end
-    interpolation_bc!(B,2)
-    interpolation_bc!(B,3)
+    interpolation_bc!(B.y)
+    interpolation_bc!(B.z)
 end
 
 
@@ -255,8 +260,8 @@ function kinetic_energy(s, A, g)
 		i, l = g(s.x[j])
 		r = 1-l
 		Kx +=  s.px[j]^2
-		Ky += (s.py[j] - s.q*(l*A[2,i]+r*A[2,i+1]))^2
-		Kz += (s.pz[j] - s.q*(l*A[3,i]+r*A[3,i+1]))^2
+		Ky += (s.py[j] - s.q*(l*A.y[i]+r*A.y[i+1]))^2
+		Kz += (s.pz[j] - s.q*(l*A.z[i]+r*A.z[i+1]))^2
 	end
 	Kx/(2*s.m*s.N), Ky/(2*s.m*s.N), Kz/(2*s.m*s.N)
 end
@@ -271,10 +276,10 @@ function current_densities!(Jx, Jy, Jz, A, e, g)
 		r = 1 - l
 		Jx[j]   += l*e.px[k]
 		Jx[j+1] += r*e.px[k]
-		Jy[j] 	+= l*(e.py[k] - e.q*(l*A[2,j]+r*A[2,j+1]))
-		Jy[j+1] += r*(e.py[k] - e.q*(l*A[2,j]+r*A[2,j+1]))
-		Jz[j]   += l*(e.pz[k] - e.q*(l*A[3,j]+r*A[3,j+1]))
-		Jz[j+1] += r*(e.pz[k] - e.q*(l*A[3,j]+r*A[3,j+1]))
+		Jy[j] 	+= l*(e.py[k] - e.q*(l*A.y[j]+r*A.y[j+1]))
+		Jy[j+1] += r*(e.py[k] - e.q*(l*A.y[j]+r*A.y[j+1]))
+		Jz[j]   += l*(e.pz[k] - e.q*(l*A.z[j]+r*A.z[j+1]))
+		Jz[j+1] += r*(e.pz[k] - e.q*(l*A.z[j]+r*A.z[j+1]))
 	end
 	Jx .*= e.q/(e.m*g.Npc)
 	Jy .*= e.q/(e.m*g.Npc)
@@ -286,7 +291,7 @@ end
 
 
 @inline it(E, l, j) = (l*E[j]+(1-l)*E[j+1])
-@inline it(A, l, i, j) = (l*A[i,j]+(1-l)*A[i,j+1])
+# @inline it(A, l, i, j) = (l*A[i,j]+(1-l)*A[i,j+1])
 
 
 function leap_frog_halfstep!(s, dt, Ex, g)
@@ -304,15 +309,15 @@ function leap_frog!(s, dt, Ex, B, A, g)
 	for k in eachindex(s.x)
 		j, l = g(s.x[k])
 		s.px[k] += dt*q*it(Ex,l,j) + dt*q/m*(
-			 (s.py[k]-q*it(A,l,2,j))*it(B,l,3,j) -
-			 (s.pz[k]-q*it(A,l,3,j))*it(B,l,2,j))
+			 (s.py[k]-q*it(A.y,l,j))*it(B.z,l,j) -
+			 (s.pz[k]-q*it(A.z,l,j))*it(B.y,l,j))
 		s.x[k] += dt*s.px[k]/m
 	end
 	boundary_condition!(s, g)
 end
 
 
-function prestart!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
+function prestart!(e, i, ρ, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
 	dt = step(time)
 	e.px .*= u/uˣ
 	e.py .*= u/uʸ
@@ -321,11 +326,11 @@ function prestart!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
 	i.py .*= u/uʸ
 	i.pz .*= u/uᶻ
 	@showprogress 1 "Prestart... " for t in time
-		sources!(ρ, μ, f, e, i, g)
+		sources!(ρ, A.μ, A.fy, A.fz, e, i, g)
 		scalar_potential!(φ, ρ, g)
 		gradient!(Ex, φ, g)
 		Ex .*= -1
-		vector_potential!(A, μ, f, g)
+		vector_potential!(A, g)
 		curl!(B, A, g)
 		leap_frog!(e, dt, Ex, B, A, g)
 		leap_frog!(i, dt, Ex, B, A, g)
@@ -340,17 +345,17 @@ function prestart!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
 end
 
 
-function prestart!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
+function prestart!(e, ::Nothing, ρ, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
 	dt = step(time)
 	e.px .*= u/uˣ
 	e.py .*= u/uʸ
 	e.pz .*= u/uᶻ
 	@showprogress 1 "Prestart... " for t in time
-		sources!(ρ, μ, f, e, g)
+		sources!(ρ, A.μ, A.fy, A.fz, e, g)
 		scalar_potential!(φ, ρ, g)
 		gradient!(Ex, φ, g)
 		Ex .*= -1
-		vector_potential!(A, μ, f, g)
+		vector_potential!(A, g)
 		curl!(B, A, g)
 		leap_frog!(e, dt, Ex, B, A, g)
 	end
@@ -402,17 +407,17 @@ function write_SoA(dir, obj)
 	end
 end
 
-function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, dir)
+function simulation!(e, i, ρ, φ, Ex, B, A, g, time, dir)
 	field = Fields{Float64}(g.N, length(time))
 	energy = Energies{Float64}(length(time))
 	Ki = zeros(length(time))
 	dt = step(time)
 	@showprogress 1 "Computing..." for t in eachindex(time)
-		sources!(ρ, μ, f, e, i, g)
+		sources!(ρ, A.μ, A.fy, A.fz, e, i, g)
 		scalar_potential!(φ, ρ, g)
 		gradient!(Ex, φ, g)
 		Ex .*= -1
-		vector_potential!(A, μ, f, g)
+		vector_potential!(A, g)
 		curl!(B, A, g)
 		leap_frog!(e, dt, Ex, B, A, g)
 		leap_frog!(i, dt, Ex, B, A, g)
@@ -425,15 +430,15 @@ function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, dir)
 		energy.A[t] = 2Kz/(Kx+Ky) - 1
 		Ki[t] = sum(kinetic_energy(i, A, g))
 		energy.Ex[t] = field_energy(Ex, g)
-		energy.By[t] = field_energy(B, 2, g)
-		energy.Bz[t] = field_energy(B, 3, g)
+		energy.By[t] = field_energy(B.y, g)
+		energy.Bz[t] = field_energy(B.z, g)
 		field.rho[:,t] .= ρ[g.in]
 		field.phi[:,t] .= φ[g.in]
-		field.Ay[:,t] .= A[2,g.in]
-		field.Az[:,t] .= A[3,g.in]
+		field.Ay[:,t] .= A.y[g.in]
+		field.Az[:,t] .= A.z[g.in]
 		field.Ex[:,t] .= Ex[g.in]
-		field.By[:,t] .= B[2,g.in]
-		field.Bz[:,t] .= B[3,g.in]
+		field.By[:,t] .= B.y[g.in]
+		field.Bz[:,t] .= B.z[g.in]
 	end
 	
 	write_SoA(dir*"energies.h5", energy)
@@ -442,7 +447,7 @@ function simulation!(e, i, ρ, μ, f, φ, Ex, B, A, g, time, dir)
 end
 
 
-function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, dir)
+function simulation!(e, ::Nothing, ρ, φ, Ex, B, A, g, time, dir)
 	Jx = similar(ρ)
 	Jy = similar(ρ)
 	Jz = similar(ρ)
@@ -451,11 +456,11 @@ function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, dir)
 	Ki = zeros(length(time))
 	dt = step(time)
 	@showprogress 1 "Computing..." for t in eachindex(time)
-		sources!(ρ, μ, f, e, g)
+		sources!(ρ, A.μ, A.fy, A.fz, e, g)
 		scalar_potential!(φ, ρ, g)
 		gradient!(Ex, φ, g)
 		Ex .*= -1
-		vector_potential!(A, μ, f, g)
+		vector_potential!(A, g)
 		curl!(B, A, g)
 		current_densities!(Jx, Jy, Jz, A, e, g)
 		leap_frog!(e, dt, Ex, B, A, g)
@@ -467,21 +472,21 @@ function simulation!(e, ::Nothing, ρ, μ, f, φ, Ex, B, A, g, time, dir)
 		energy.Kz[t] = Kz
 		energy.A[t] = 2Kz/(Kx+Ky) - 1
 		energy.Ex[t] = field_energy(Ex, g)
-		energy.By[t] = field_energy(B, 2, g)
-		energy.Bz[t] = field_energy(B, 3, g)
+		energy.By[t] = field_energy(B.y, g)
+		energy.Bz[t] = field_energy(B.z, g)
 		# fields_time[t] = t
-		# fields_Jy[:,t] .= f[2,g.in] .- μ[g.in].*A[2,g.in]
-		# fields_Jz[:,t] .= f[3,g.in] .- μ[g.in].*A[3,g.in]
+		# fields_Jy[:,t] .= A.fy[g.in] .- A.μ[g.in].*A.y[g.in]
+		# fields_Jz[:,t] .= A.fz[g.in] .- A.μ[g.in].*A.z[g.in]
 		field.Jx[:,t] .= Jx[g.in]
 		field.Jy[:,t] .= Jy[g.in]
 		field.Jz[:,t] .= Jz[g.in]
 		field.rho[:,t] .= ρ[g.in]
 		field.phi[:,t] .= φ[g.in]
-		field.Ay[:,t] .= A[2,g.in]
-		field.Az[:,t] .= A[3,g.in]
+		field.Ay[:,t] .= A.y[g.in]
+		field.Az[:,t] .= A.z[g.in]
 		field.Ex[:,t] .= Ex[g.in]
-		field.By[:,t] .= B[2,g.in]
-		field.Bz[:,t] .= B[3,g.in]
+		field.By[:,t] .= B.y[g.in]
+		field.Bz[:,t] .= B.z[g.in]
 	end
 	
 	write_SoA(dir*"energies.h5", energy)
@@ -505,35 +510,54 @@ struct Model
 	prestart_steps::Int
 end
 
+# векторный потенциал и сеточные величины, необходимые для его расчета
+struct VectorPotential
+	y::OffsetVector
+	z::OffsetVector
+	μ::OffsetVector
+	fy::OffsetVector
+	fz::OffsetVector
+end
+function VectorPotential(N::Int)
+	arrays = [OffsetVector(zeros(N+2), 0:N+1) for i in 1:fieldcount(VectorPotential)]
+	VectorPotential(arrays...)
+end
+function VectorPotential(g::Grid)
+	arrays = [similar(g.range) for i in 1:fieldcount(VectorPotential)]
+	VectorPotential(arrays...)
+end
+
+struct MagneticField
+	y::OffsetVector
+	z::OffsetVector
+end
+function MagneticField(N::Int)
+	arrays = [OffsetVector(zeros(N+2), 0:N+1) for i in 1:fieldcount(MagneticField)]
+	MagneticField(arrays...)
+end
+function MagneticField(g::Grid)
+	arrays = [similar(g.range) for i in 1:fieldcount(MagneticField)]
+	MagneticField(arrays...)
+end
+
 # минимальная модель, необходимая для вычисления одной итерации
 struct NumericalModel
 	g::Grid
 	ρ::OffsetVector
-	μ::OffsetVector
 	φ::OffsetVector
 	Ex::OffsetVector
-	f::OffsetMatrix
-	A::OffsetMatrix
-	B::OffsetMatrix
+	B::MagneticField
+	A::VectorPotential
 end
 
 function NumericalModel(g::Grid)
-	ρ = OffsetVector(zeros(g.N+2), 0:g.N+1)
-	μ = similar(ρ)
+	ρ = similar(g.range)
 	φ = similar(ρ)
 	Ex = similar(ρ)
-	f = OffsetMatrix(zeros(2,g.N+2), 2:3, 0:g.N+1)
-	A = similar(f)
-	B = similar(f)
+	B = MagneticField(g)
+	A = VectorPotential(g)
 	
-	NumericalModel(g,
-		ρ,
-		μ,
-		φ,
-		Ex,
-		f,
-		A,
-		B)
+	NumericalModel(g, ρ, φ, Ex,	B, A)
 end
 
 let
@@ -583,17 +607,18 @@ if !model.ion_bg
 end
 
 	num_model = NumericalModel(g)
-	model.ion_bg || sources!(num_model.ρ, num_model.μ, num_model.f, e, i, num_model.g)
-	model.ion_bg && sources!(num_model.ρ, num_model.μ, num_model.f, e, num_model.g)
+	model.ion_bg || sources!(num_model.ρ, num_model.A.μ, num_model.A.fy, num_model.A.fz, e, i, num_model.g)
+	model.ion_bg && sources!(num_model.ρ, num_model.A.μ, num_model.A.fy, num_model.A.fz, e, num_model.g)
 	scalar_potential!(num_model.φ, num_model.ρ, num_model.g)
 	gradient!(num_model.Ex, num_model.φ, num_model.g)
 	num_model.Ex .*= -1
-	vector_potential!(num_model.A, num_model.μ, num_model.f, num_model.g)
-	num_model.B .= 0
+	vector_potential!(num_model.A, num_model.g)
+	num_model.B.y .= 0
+	num_model.B.z .= 0
 
 	leap_frog_halfstep!(e, step(model.time), num_model.Ex, num_model.g)
 	leap_frog_halfstep!(i, step(model.time), num_model.Ex, num_model.g)
-	prestart!(e, i, num_model.ρ, num_model.μ, num_model.f,num_model.φ, num_model.Ex, num_model.B, num_model.A, num_model.g, model.time[1:model.prestart_steps],
+	prestart!(e, i, num_model.ρ, num_model.φ, num_model.Ex, num_model.B, num_model.A, num_model.g, model.time[1:model.prestart_steps],
 		min(model.uˣ, model.uʸ, model.uᶻ), (model.uˣ, model.uʸ, model.uᶻ))
-	simulation!(e, i, num_model.ρ, num_model.μ, num_model.f, num_model.φ, num_model.Ex, num_model.B, num_model.A, num_model.g, model.time, dir)
+	simulation!(e, i, num_model.ρ, num_model.φ, num_model.Ex, num_model.B, num_model.A, num_model.g, model.time, dir)
 end
