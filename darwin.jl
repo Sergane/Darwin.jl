@@ -88,6 +88,8 @@ function hammersley(p, N)
 	return seq
 end
 
+using Distributions
+
 uniform_rand(L, N) = rand(Uniform(0,L), N)
 normal_rand(σ, N) = rand(Normal(0,σ),N)
 uniform_quiet_H(p, L, N) = hammersley(p,N) * L
@@ -493,40 +495,14 @@ end
 struct Model
 	time::AbstractRange
 	L::Float64
-	Nc::UInt
-	Npc::UInt
+	Nc::Int
+	Npc::Int
 	uˣ::Float64
 	uʸ::Float64
 	uᶻ::Float64
 	ion_bg::Bool
 	init_method::String
-	prestart_steps::UInt
-
-	g::Grid
-end
-
-function Model(time,
-	L,
-	Nc,
-	Npc,
-	uˣ,
-	uʸ,
-	uᶻ,
-	ion_bg,
-	init_method,
-	prestart_steps)
-	
-	Model(time,
-		L,
-		Nc,
-		Npc,
-		uˣ,
-		uʸ,
-		uᶻ,
-		ion_bg,
-		init_method,
-		prestart_steps,
-		Grid(L, Nc, Npc))
+	prestart_steps::Int
 end
 
 # минимальная модель, необходимая для вычисления одной итерации
@@ -571,6 +547,7 @@ let
 		false,
 		"rand",
 		50)
+	g = Grid(model.L, model.Nc, model.Npc)
 	println("A: $((model.uᶻ/model.uˣ)^2-1)")
 	
 	dir = isempty(ARGS) ? "test/" : ARGS[1]*"/"
@@ -583,9 +560,7 @@ let
 
 	#step(time)*√(uˣ^2+uʸ^2+uᶻ^2) ≤ L/2Nc
 
-	using Distributions
-
-	N = model.g.Npc*model.g.N  # количество модельных частиц
+	N = g.Npc*g.N  # количество модельных частиц
 
 	e = ParticleSet{Float64}(-1, 1, N)
 	eval(Symbol("init_"*model.init_method*'!'))(e, model.L, (model.uˣ,model.uʸ,model.uᶻ)./√2..., (2,3,7,5))
@@ -607,18 +582,18 @@ if !model.ion_bg
 	write_SoA(dir*"init_ion.h5", i)
 end
 
-	num_model = NumericalModel(model.g)
-	model.ion_bg || sources!(num_model.ρ, num_model.μ, num_model.f, e, i, model.g)
-	model.ion_bg && sources!(num_model.ρ, num_model.μ, num_model.f, e, model.g)
-	scalar_potential!(num_model.φ, num_model.ρ, model.g)
-	gradient!(num_model.Ex, num_model.φ, model.g)
+	num_model = NumericalModel(g)
+	model.ion_bg || sources!(num_model.ρ, num_model.μ, num_model.f, e, i, num_model.g)
+	model.ion_bg && sources!(num_model.ρ, num_model.μ, num_model.f, e, num_model.g)
+	scalar_potential!(num_model.φ, num_model.ρ, num_model.g)
+	gradient!(num_model.Ex, num_model.φ, num_model.g)
 	num_model.Ex .*= -1
-	vector_potential!(num_model.A, num_model.μ, num_model.f, model.g)
+	vector_potential!(num_model.A, num_model.μ, num_model.f, num_model.g)
 	num_model.B .= 0
 
-	leap_frog_halfstep!(e, step(model.time), num_model.Ex, model.g)
-	leap_frog_halfstep!(i, step(model.time), num_model.Ex, model.g)
-	prestart!(e, i, num_model.ρ, num_model.μ, num_model.f,num_model.φ, num_model.Ex, num_model.B, num_model.A, model.g, model.time[1:model.prestart_steps],
+	leap_frog_halfstep!(e, step(model.time), num_model.Ex, num_model.g)
+	leap_frog_halfstep!(i, step(model.time), num_model.Ex, num_model.g)
+	prestart!(e, i, num_model.ρ, num_model.μ, num_model.f,num_model.φ, num_model.Ex, num_model.B, num_model.A, num_model.g, model.time[1:model.prestart_steps],
 		min(model.uˣ, model.uʸ, model.uᶻ), (model.uˣ, model.uʸ, model.uᶻ))
-	simulation!(e, i, num_model.ρ, num_model.μ, num_model.f, num_model.φ, num_model.Ex, num_model.B, num_model.A, model.g, model.time, dir)
+	simulation!(e, i, num_model.ρ, num_model.μ, num_model.f, num_model.φ, num_model.Ex, num_model.B, num_model.A, num_model.g, model.time, dir)
 end
