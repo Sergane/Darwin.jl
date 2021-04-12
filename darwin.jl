@@ -140,11 +140,11 @@ struct ParticleSet{T}
 end
 
 
-function sources!(ρ, μ, fy, fz, e, i, g)
+function sources!(ρ, A, e, i, g)
 	ρ .= 0
-	μ .= 0
-	fy .= 0
-	fz .= 0
+	A.μ .= 0
+	A.fy .= 0
+	A.fz .= 0
 	for s in (e, i)
 		m = s.m
 		q = s.q
@@ -155,26 +155,26 @@ function sources!(ρ, μ, fy, fz, e, i, g)
 			r /= g.Npc
 			ρ[j]   += l*q
 			ρ[j+1] += r*q
-			μ[j]   += l*q^2/m
-			μ[j+1] += r*q^2/m
-			fy[j]   += l*q/m*s.py[k]
-			fy[j+1] += r*q/m*s.py[k]
-			fz[j]   += l*q/m*s.pz[k]
-			fz[j+1] += r*q/m*s.pz[k]
+			A.μ[j]   += l*q^2/m
+			A.μ[j+1] += r*q^2/m
+			A.fy[j]   += l*q/m*s.py[k]
+			A.fy[j+1] += r*q/m*s.py[k]
+			A.fz[j]   += l*q/m*s.pz[k]
+			A.fz[j+1] += r*q/m*s.pz[k]
 		end # хранить сетки рядом?
 	end
 	boundary_condition!(ρ)
-	boundary_condition!(μ)
-	boundary_condition!(fy)
-	boundary_condition!(fz)
+	boundary_condition!(A.μ)
+	boundary_condition!(A.fy)
+	boundary_condition!(A.fz)
 	interpolation_bc!(ρ)
 end
 
-function sources!(ρ, μ, fy, fz, e, g)
+function sources!(ρ, A, e, g)
 	ρ .= 0
-	μ .= 0
-	fy .= 0
-	fz .= 0
+	A.μ .= 0
+	A.fy .= 0
+	A.fz .= 0
 	m = e.m
 	q = e.q
 	@inbounds for k in 1:e.N
@@ -184,20 +184,20 @@ function sources!(ρ, μ, fy, fz, e, g)
 		r /= g.Npc
 		ρ[j]   += l
 		ρ[j+1] += r
-		fy[j] 	+= l*e.py[k]
-		fy[j+1] += r*e.py[k]
-		fz[j]   += l*e.pz[k]
-		fz[j+1] += r*e.pz[k]
+		A.fy[j]   += l*e.py[k]
+		A.fy[j+1] += r*e.py[k]
+		A.fz[j]   += l*e.pz[k]
+		A.fz[j+1] += r*e.pz[k]
 	end
 	ρ .*= q
-	μ .= ρ.*(q/m)
-	fy .*= q/m
-	fz .*= q/m
+	A.μ .= ρ.*(q/m)
+	A.fy .*= q/m
+	A.fz .*= q/m
 	boundary_condition!(ρ)
 	ρ .-= e.q  # ионный фон
-	boundary_condition!(μ)
-	boundary_condition!(fy)
-	boundary_condition!(fz)
+	boundary_condition!(A.μ)
+	boundary_condition!(A.fy)
+	boundary_condition!(A.fz)
 	interpolation_bc!(ρ)
 end
 
@@ -326,7 +326,7 @@ function prestart!(e, i, ρ, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
 	i.py .*= u/uʸ
 	i.pz .*= u/uᶻ
 	@showprogress 1 "Prestart... " for t in time
-		sources!(ρ, A.μ, A.fy, A.fz, e, i, g)
+		sources!(ρ, A, e, i, g)
 		scalar_potential!(φ, ρ, g)
 		gradient!(Ex, φ, g)
 		Ex .*= -1
@@ -351,7 +351,7 @@ function prestart!(e, ::Nothing, ρ, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
 	e.py .*= u/uʸ
 	e.pz .*= u/uᶻ
 	@showprogress 1 "Prestart... " for t in time
-		sources!(ρ, A.μ, A.fy, A.fz, e, g)
+		sources!(ρ, A, e, g)
 		scalar_potential!(φ, ρ, g)
 		gradient!(Ex, φ, g)
 		Ex .*= -1
@@ -413,7 +413,7 @@ function simulation!(e, i, ρ, φ, Ex, B, A, g, time, dir)
 	Ki = zeros(length(time))
 	dt = step(time)
 	@showprogress 1 "Computing..." for t in eachindex(time)
-		sources!(ρ, A.μ, A.fy, A.fz, e, i, g)
+		sources!(ρ, A, e, i, g)
 		scalar_potential!(φ, ρ, g)
 		gradient!(Ex, φ, g)
 		Ex .*= -1
@@ -456,7 +456,7 @@ function simulation!(e, ::Nothing, ρ, φ, Ex, B, A, g, time, dir)
 	Ki = zeros(length(time))
 	dt = step(time)
 	@showprogress 1 "Computing..." for t in eachindex(time)
-		sources!(ρ, A.μ, A.fy, A.fz, e, g)
+		sources!(ρ, A, e, g)
 		scalar_potential!(φ, ρ, g)
 		gradient!(Ex, φ, g)
 		Ex .*= -1
@@ -511,54 +511,59 @@ struct Model
 end
 
 # векторный потенциал и сеточные величины, необходимые для его расчета
-struct VectorPotential
-	y::OffsetVector
-	z::OffsetVector
-	μ::OffsetVector
-	fy::OffsetVector
-	fz::OffsetVector
+struct VectorPotential{T}
+	y::OffsetVector{T,Vector{T}}
+	z::OffsetVector{T,Vector{T}}
+	μ::OffsetVector{T,Vector{T}}
+	fy::OffsetVector{T,Vector{T}}
+	fz::OffsetVector{T,Vector{T}}
 end
-function VectorPotential(N::Int)
+function VectorPotential{T}(N::Int) where T
 	arrays = [OffsetVector(zeros(N+2), 0:N+1) for i in 1:fieldcount(VectorPotential)]
-	VectorPotential(arrays...)
+	VectorPotential{T}(arrays...)
 end
-function VectorPotential(g::Grid)
+VectorPotential(N::Int) = VectorPotential{Float64}(N)
+function VectorPotential{T}(g::Grid) where T
 	arrays = [similar(g.range) for i in 1:fieldcount(VectorPotential)]
-	VectorPotential(arrays...)
+	VectorPotential{T}(arrays...)
 end
+VectorPotential(g::Grid) = VectorPotential{Float64}(g)
 
-struct MagneticField
-	y::OffsetVector
-	z::OffsetVector
+struct MagneticField{T}
+	y::OffsetVector{T,Vector{T}}
+	z::OffsetVector{T,Vector{T}}
 end
-function MagneticField(N::Int)
+function MagneticField{T}(N::Int) where T
 	arrays = [OffsetVector(zeros(N+2), 0:N+1) for i in 1:fieldcount(MagneticField)]
-	MagneticField(arrays...)
+	MagneticField{T}(arrays...)
 end
-function MagneticField(g::Grid)
+MagneticField(N::Int) = MagneticField{Float64}(N)
+function MagneticField{T}(g::Grid) where T
 	arrays = [similar(g.range) for i in 1:fieldcount(MagneticField)]
-	MagneticField(arrays...)
+	MagneticField{T}(arrays...)
 end
+MagneticField(g::Grid) = MagneticField{Float64}(g)
 
 # минимальная модель, необходимая для вычисления одной итерации
-struct NumericalModel
-	g::Grid
-	ρ::OffsetVector
-	φ::OffsetVector
-	Ex::OffsetVector
-	B::MagneticField
-	A::VectorPotential
+struct NumericalModel{T}
+	g::Grid{T}
+	ρ::OffsetVector{T,Vector{T}}
+	φ::OffsetVector{T,Vector{T}}
+	Ex::OffsetVector{T,Vector{T}}
+	B::MagneticField{T}
+	A::VectorPotential{T}
 end
 
-function NumericalModel(g::Grid)
+function NumericalModel{T}(g::Grid) where T
 	ρ = similar(g.range)
 	φ = similar(ρ)
 	Ex = similar(ρ)
 	B = MagneticField(g)
 	A = VectorPotential(g)
 	
-	NumericalModel(g, ρ, φ, Ex,	B, A)
+	NumericalModel{T}(g, ρ, φ, Ex, B, A)
 end
+NumericalModel(g) = NumericalModel{Float64}(g)
 
 let
 	model = Model(0:0.25:50,
@@ -607,8 +612,8 @@ if !model.ion_bg
 end
 
 	num_model = NumericalModel(g)
-	model.ion_bg || sources!(num_model.ρ, num_model.A.μ, num_model.A.fy, num_model.A.fz, e, i, num_model.g)
-	model.ion_bg && sources!(num_model.ρ, num_model.A.μ, num_model.A.fy, num_model.A.fz, e, num_model.g)
+	model.ion_bg || sources!(num_model.ρ, num_model.A, e, i, num_model.g)
+	model.ion_bg && sources!(num_model.ρ, num_model.A, e, num_model.g)
 	scalar_potential!(num_model.φ, num_model.ρ, num_model.g)
 	gradient!(num_model.Ex, num_model.φ, num_model.g)
 	num_model.Ex .*= -1
