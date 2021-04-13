@@ -324,19 +324,36 @@ function prestart!(species, model, time, (uˣ,uʸ,uᶻ))
 end
 
 
-struct Energies{T}
-	K::Vector{T}
-	Kx::Vector{T}
-	Ky::Vector{T}
-	Kz::Vector{T}
-	A::Vector{T}  # показатель анизотропии
+struct KineticEnergies{T}
+	sum::Vector{T}
+	x::Vector{T}
+	y::Vector{T}
+	z::Vector{T}
+
+	function KineticEnergies{T}(N::Int) where {T<:Real}
+		arrays = [zeros(T,N) for i in 1:fieldcount(KineticEnergies)]
+		new(arrays...)
+	end
+end
+
+struct FieldEnergies{T}
 	Ex::Vector{T}
 	By::Vector{T}
 	Bz::Vector{T}
 
-	function Energies{T}(N::Int) where {T<:Real}
-		arrays = [zeros(T,N) for i in 1:fieldcount(Energies)]
+	function FieldEnergies{T}(N::Int) where {T<:Real}
+		arrays = [zeros(T,N) for i in 1:fieldcount(FieldEnergies)]
 		new(arrays...)
+	end
+end
+
+struct Energies{T}
+	K::Vector{KineticEnergies{T}}
+	fields::FieldEnergies{T}
+
+	function Energies{T}(N::Int, species_num::Int) where {T<:Real}
+		new([KineticEnergies{T}(N) for i in 1:species_num],
+			FieldEnergies{T}(N))
 	end
 end
 
@@ -348,12 +365,20 @@ struct Fields{T}
 	Ex::Matrix{T}
 	By::Matrix{T}
 	Bz::Matrix{T}
-	Jx::Matrix{T}
-	Jy::Matrix{T}
-	Jz::Matrix{T}
 
 	function Fields{T}(M, N) where {T<:Real}
 		arrays = [zeros(T,M,N) for i in 1:fieldcount(Fields)]
+		new(arrays...)
+	end
+end
+
+struct Densities{T}
+	x::Matrix{T}
+	y::Matrix{T}
+	z::Matrix{T}
+
+	function Densities{T}(M, N) where {T<:Real}
+		arrays = [zeros(T,M,N) for i in 1:fieldcount(Densities)]
 		new(arrays...)
 	end
 end
@@ -366,80 +391,48 @@ function write_SoA(dir, obj)
 	end
 end
 
-function simulation!(e, i, ρ, φ, Ex, B, A, g, time, dir)
-	field = Fields{Float64}(g.N, length(time))
-	energy = Energies{Float64}(length(time))
-	Ki = zeros(length(time))
-	dt = step(time)
-	@showprogress 1 "Computing..." for t in eachindex(time)
-		# sources!(ρ, A, e, i, g)
-		collect_sources!(ρ, A, g, [e, i])
-		scalar_potential!(φ, ρ, g)
-		gradient!(Ex, φ, g)
-		Ex .*= -1
-		vector_potential!(A, g)
-		curl!(B, A, g)
-		leap_frog!(e, dt, Ex, B, A, g)
-		leap_frog!(i, dt, Ex, B, A, g)
-		# сбор данных
-		Kx, Ky, Kz = kinetic_energy(e, A, g)
-		energy.K[t] = Kx+Ky+Kz
-		energy.Kx[t] = Kx
-		energy.Ky[t] = Ky
-		energy.Kz[t] = Kz
-		energy.A[t] = 2Kz/(Kx+Ky) - 1
-		Ki[t] = sum(kinetic_energy(i, A, g))
-		energy.Ex[t] = field_energy(Ex, g)
-		energy.By[t] = field_energy(B.y, g)
-		energy.Bz[t] = field_energy(B.z, g)
-		field.rho[:,t] .= ρ[g.in]
-		field.phi[:,t] .= φ[g.in]
-		field.Ay[:,t] .= A.y[g.in]
-		field.Az[:,t] .= A.z[g.in]
-		field.Ex[:,t] .= Ex[g.in]
-		field.By[:,t] .= B.y[g.in]
-		field.Bz[:,t] .= B.z[g.in]
-	end
-	
-	write_SoA(dir*"energies.h5", energy)
-	write_SoA(dir*"fields.h5", field)
-	return
-end
-
-
-function simulation!(e, ::Nothing, ρ, φ, Ex, B, A, g, time, dir)
+function simulation!(species, model, time, dir)
+	g = model.g
+	ρ = model.ρ
+	φ = model.φ
+	Ex= model.Ex
+	B = model.B
+	A = model.A
 	Jx = similar(ρ)
 	Jy = similar(ρ)
 	Jz = similar(ρ)
-	field = Fields{Float64}(g.N, length(time))
-	energy = Energies{Float64}(length(time))
-	Ki = zeros(length(time))
 	dt = step(time)
+	field = Fields{Float64}(g.N, length(time))
+	J = [Densities{Float64}(g.N, length(time)) for i in eachindex(species)]
+	energy = Energies{Float64}(length(time), length(species))
 	@showprogress 1 "Computing..." for t in eachindex(time)
-		collect_sources!(ρ, A, g, [e])
+		init_sources!(ρ, A)
+		for s in species
+			collect_sources!(ρ, A, g, s)
+		end
 		scalar_potential!(φ, ρ, g)
 		gradient!(Ex, φ, g)
 		Ex .*= -1
 		vector_potential!(A, g)
 		curl!(B, A, g)
-		current_densities!(Jx, Jy, Jz, A, e, g)
-		leap_frog!(e, dt, Ex, B, A, g)
+		for (i,s) in enumerate(species)
+			# current_densities!(J[i].x[:,t], J[i].y[:,t], J[i].z[:,t], A, s, g)
+			leap_frog!(s, dt, Ex, B, A, g)
+		end
 		# сбор данных
-		Kx, Ky, Kz = kinetic_energy(e, A, g)
-		energy.K[t] = Kx+Ky+Kz
-		energy.Kx[t] = Kx
-		energy.Ky[t] = Ky
-		energy.Kz[t] = Kz
-		energy.A[t] = 2Kz/(Kx+Ky) - 1
-		energy.Ex[t] = field_energy(Ex, g)
-		energy.By[t] = field_energy(B.y, g)
-		energy.Bz[t] = field_energy(B.z, g)
+		for (i,s) in enumerate(species)
+			Kx, Ky, Kz = kinetic_energy(s, A, g)
+			energy.K[i].sum[t] = Kx+Ky+Kz
+			energy.K[i].x[t] = Kx
+			energy.K[i].y[t] = Ky
+			energy.K[i].z[t] = Kz
+		end
+		energy.fields.Ex[t] = field_energy(Ex, g)
+		energy.fields.By[t] = field_energy(B.y, g)
+		energy.fields.Bz[t] = field_energy(B.z, g)
 		# fields_time[t] = t
 		# fields_Jy[:,t] .= A.fy[g.in] .- A.μ[g.in].*A.y[g.in]
 		# fields_Jz[:,t] .= A.fz[g.in] .- A.μ[g.in].*A.z[g.in]
-		field.Jx[:,t] .= Jx[g.in]
-		field.Jy[:,t] .= Jy[g.in]
-		field.Jz[:,t] .= Jz[g.in]
 		field.rho[:,t] .= ρ[g.in]
 		field.phi[:,t] .= φ[g.in]
 		field.Ay[:,t] .= A.y[g.in]
@@ -449,9 +442,12 @@ function simulation!(e, ::Nothing, ρ, φ, Ex, B, A, g, time, dir)
 		field.Bz[:,t] .= B.z[g.in]
 	end
 	
-	write_SoA(dir*"energies.h5", energy)
+	write_SoA(dir*"energies.h5", energy.fields)
 	write_SoA(dir*"fields.h5", field)
-	return
+	for i in eachindex(species)
+		write_SoA(dir*"kinetic_energies_"*string(i)*".h5", energy.K[i])
+		# write_SoA(dir*"J_"*string(i)*".h5", J[i])
+	end
 end
 
 
@@ -592,5 +588,5 @@ end
 		leap_frog_halfstep!(s, step(model.time), num_model.Ex, num_model.g)
 	end
 	prestart!(species, num_model, model.time[1:model.prestart_steps], (model.uˣ, model.uʸ, model.uᶻ))
-	simulation!(e, i, num_model.ρ, num_model.φ, num_model.Ex, num_model.B, num_model.A, num_model.g, model.time, dir)
+	simulation!(species, num_model, model.time, dir)
 end
