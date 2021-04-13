@@ -276,7 +276,6 @@ end
 
 
 function leap_frog_halfstep!(s, dt, Ex, g)
-	s isa Nothing && return
 	for k in eachindex(s.x)
 		j, l = g(s.x[k])
 		s.px[k] -= dt/2*s.q*(l*Ex[j]+(1-l)*Ex[j+1])
@@ -298,53 +297,32 @@ function leap_frog!(s, dt, Ex, B, A, g)
 end
 
 
-function prestart!(e, i, ρ, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
+function prestart!(species, model, time, (uˣ,uʸ,uᶻ))
+	u = min(uˣ,uʸ,uᶻ)
 	dt = step(time)
-	e.px .*= u/uˣ
-	e.py .*= u/uʸ
-	e.pz .*= u/uᶻ
-	i.px .*= u/uˣ
-	i.py .*= u/uʸ
-	i.pz .*= u/uᶻ
-	@showprogress 1 "Prestart... " for t in time
-		collect_sources!(ρ, A, g, [e, i])
-		scalar_potential!(φ, ρ, g)
-		gradient!(Ex, φ, g)
-		Ex .*= -1
-		vector_potential!(A, g)
-		curl!(B, A, g)
-		leap_frog!(e, dt, Ex, B, A, g)
-		leap_frog!(i, dt, Ex, B, A, g)
+	for s in species
+		s.px .*= u/uˣ
+		s.py .*= u/uʸ
+		s.pz .*= u/uᶻ
 	end
-	e.px .*= uˣ/u
-	e.py .*= uʸ/u
-	e.pz .*= uᶻ/u
-	i.px .*= uˣ/u
-	i.py .*= uʸ/u
-	i.pz .*= uᶻ/u
-	return
+	@showprogress 1 "Prestart... " for t in time
+		collect_sources!(model.ρ, model.A, model.g, species)
+		scalar_potential!(model.φ, model.ρ, model.g)
+		gradient!(model.Ex, model.φ, model.g)
+		model.Ex .*= -1
+		vector_potential!(model.A, model.g)
+		curl!(model.B, model.A, model.g)
+		for s in species
+			leap_frog!(s, dt, model.Ex, model.B, model.A, model.g)
+		end
+	end
+	for s in species
+		s.px .*= uˣ/u
+		s.py .*= uʸ/u
+		s.pz .*= uᶻ/u
+	end
 end
 
-
-function prestart!(e, ::Nothing, ρ, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
-	dt = step(time)
-	e.px .*= u/uˣ
-	e.py .*= u/uʸ
-	e.pz .*= u/uᶻ
-	@showprogress 1 "Prestart... " for t in time
-		collect_sources!(ρ, A, g, [e])
-		scalar_potential!(φ, ρ, g)
-		gradient!(Ex, φ, g)
-		Ex .*= -1
-		vector_potential!(A, g)
-		curl!(B, A, g)
-		leap_frog!(e, dt, Ex, B, A, g)
-	end
-	e.px .*= uˣ/u
-	e.py .*= uʸ/u
-	e.pz .*= uᶻ/u
-	return
-end
 
 struct Energies{T}
 	K::Vector{T}
@@ -597,10 +575,12 @@ if !model.ion_bg
 
 	write_SoA(dir*"init_ion.h5", i)
 end
+	species = [e]
+	model.ion_bg || push!(species, i)
 
 	num_model = NumericalModel(g)
-	model.ion_bg || collect_sources!(num_model.ρ, num_model.A, num_model.g, [e, i])
-	model.ion_bg && collect_sources!(num_model.ρ, num_model.A, num_model.g, [e])
+	
+	collect_sources!(num_model.ρ, num_model.A, num_model.g, species)
 	scalar_potential!(num_model.φ, num_model.ρ, num_model.g)
 	gradient!(num_model.Ex, num_model.φ, num_model.g)
 	num_model.Ex .*= -1
@@ -608,9 +588,9 @@ end
 	num_model.B.y .= 0
 	num_model.B.z .= 0
 
-	leap_frog_halfstep!(e, step(model.time), num_model.Ex, num_model.g)
-	leap_frog_halfstep!(i, step(model.time), num_model.Ex, num_model.g)
-	prestart!(e, i, num_model.ρ, num_model.φ, num_model.Ex, num_model.B, num_model.A, num_model.g, model.time[1:model.prestart_steps],
-		min(model.uˣ, model.uʸ, model.uᶻ), (model.uˣ, model.uʸ, model.uᶻ))
+	for s in species
+		leap_frog_halfstep!(s, step(model.time), num_model.Ex, num_model.g)
+	end
+	prestart!(species, num_model, model.time[1:model.prestart_steps], (model.uˣ, model.uʸ, model.uᶻ))
 	simulation!(e, i, num_model.ρ, num_model.φ, num_model.Ex, num_model.B, num_model.A, num_model.g, model.time, dir)
 end
