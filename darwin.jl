@@ -167,11 +167,16 @@ function collect_sources!(ρ, A, g, particle::ParticleSet)
 	A.fz .+= fz
 end
 
-function collect_sources!(ρ, A, g, species::Vector{<:ParticleSet})
+function init_sources!(ρ, A)
 	ρ .= 0
 	A.μ .= 0
 	A.fy .= 0
 	A.fz .= 0
+	return
+end
+
+function collect_sources!(ρ, A, g, species::Vector{<:ParticleSet})
+	init_sources!(ρ, A)
 	for particle in species
 		collect_sources!(ρ, A, g, particle)
 	end
