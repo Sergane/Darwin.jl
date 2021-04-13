@@ -116,11 +116,6 @@ function init_quiet_H!(s, L, σˣ, σʸ, σᶻ, (p₁,p₂,p₃,p₄))
 	return
 end
 
-function particle_set(q, m, N, space, data, range)
-	(; (space[k]=>view(data,range[k],:) for k in eachindex(space))...,
-		:q=>q, :m=>m, :N=>N)
-end
-
 struct ParticleSet{T}
 	x::Vector{T}
 	px::Vector{T}
@@ -137,73 +132,6 @@ struct ParticleSet{T}
 			zeros(T,N),
 			q, m, N)
 	end
-end
-
-
-function sources!(ρ, A, e, i, g)
-	ρ .= 0
-	A.μ .= 0
-	A.fy .= 0
-	A.fz .= 0
-	for s in (e, i)
-		m = s.m
-		q = s.q
-		@inbounds for k in 1:s.N
-			j, l = g(s.x[k])
-			r = 1 - l
-			# l /= g.Npc
-			# r /= g.Npc
-			ρ[j]   += l*q
-			ρ[j+1] += r*q
-			A.μ[j]   += l*q^2/m
-			A.μ[j+1] += r*q^2/m
-			A.fy[j]   += l*q/m*s.py[k]
-			A.fy[j+1] += r*q/m*s.py[k]
-			A.fz[j]   += l*q/m*s.pz[k]
-			A.fz[j+1] += r*q/m*s.pz[k]
-		end # хранить сетки рядом?
-	end
-	ρ ./= g.Npc
-	A.μ ./= g.Npc
-	A.fy ./= g.Npc
-	A.fz ./= g.Npc
-	
-	boundary_condition!(ρ)
-	boundary_condition!(A.μ)
-	boundary_condition!(A.fy)
-	boundary_condition!(A.fz)
-	interpolation_bc!(ρ)
-end
-
-function sources!(ρ, A, s, g)
-	ρ .= 0
-	A.μ .= 0
-	A.fy .= 0
-	A.fz .= 0
-	m = s.m
-	q = s.q
-	@inbounds for k in 1:s.N
-		j, l = g(s.x[k])
-		r = 1 - l
-		# l /= g.Npc
-		# r /= g.Npc
-		ρ[j]   += l
-		ρ[j+1] += r
-		A.fy[j]   += l*s.py[k]
-		A.fy[j+1] += r*s.py[k]
-		A.fz[j]   += l*s.pz[k]
-		A.fz[j+1] += r*s.pz[k]
-	end
-	ρ .*= q/g.Npc
-	A.μ .= ρ.*(q/m)/g.Npc
-	A.fy .*= q/m/g.Npc
-	A.fz .*= q/m/g.Npc
-	boundary_condition!(ρ)
-	ρ .-= s.q  # ионный фон
-	boundary_condition!(A.μ)
-	boundary_condition!(A.fy)
-	boundary_condition!(A.fz)
-	interpolation_bc!(ρ)
 end
 
 function collect_sources!(ρ, A, g, particle::ParticleSet)
