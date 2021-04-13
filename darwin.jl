@@ -151,8 +151,8 @@ function sources!(ρ, A, e, i, g)
 		@inbounds for k in 1:s.N
 			j, l = g(s.x[k])
 			r = 1 - l
-			l /= g.Npc
-			r /= g.Npc
+			# l /= g.Npc
+			# r /= g.Npc
 			ρ[j]   += l*q
 			ρ[j+1] += r*q
 			A.μ[j]   += l*q^2/m
@@ -163,6 +163,11 @@ function sources!(ρ, A, e, i, g)
 			A.fz[j+1] += r*q/m*s.pz[k]
 		end # хранить сетки рядом?
 	end
+	ρ ./= g.Npc
+	A.μ ./= g.Npc
+	A.fy ./= g.Npc
+	A.fz ./= g.Npc
+	
 	boundary_condition!(ρ)
 	boundary_condition!(A.μ)
 	boundary_condition!(A.fy)
@@ -170,35 +175,78 @@ function sources!(ρ, A, e, i, g)
 	interpolation_bc!(ρ)
 end
 
-function sources!(ρ, A, e, g)
+function sources!(ρ, A, s, g)
 	ρ .= 0
 	A.μ .= 0
 	A.fy .= 0
 	A.fz .= 0
-	m = e.m
-	q = e.q
-	@inbounds for k in 1:e.N
-		j, l = g(e.x[k])
+	m = s.m
+	q = s.q
+	@inbounds for k in 1:s.N
+		j, l = g(s.x[k])
 		r = 1 - l
-		l /= g.Npc
-		r /= g.Npc
+		# l /= g.Npc
+		# r /= g.Npc
 		ρ[j]   += l
 		ρ[j+1] += r
-		A.fy[j]   += l*e.py[k]
-		A.fy[j+1] += r*e.py[k]
-		A.fz[j]   += l*e.pz[k]
-		A.fz[j+1] += r*e.pz[k]
+		A.fy[j]   += l*s.py[k]
+		A.fy[j+1] += r*s.py[k]
+		A.fz[j]   += l*s.pz[k]
+		A.fz[j+1] += r*s.pz[k]
 	end
-	ρ .*= q
-	A.μ .= ρ.*(q/m)
-	A.fy .*= q/m
-	A.fz .*= q/m
+	ρ .*= q/g.Npc
+	A.μ .= ρ.*(q/m)/g.Npc
+	A.fy .*= q/m/g.Npc
+	A.fz .*= q/m/g.Npc
 	boundary_condition!(ρ)
-	ρ .-= e.q  # ионный фон
+	ρ .-= s.q  # ионный фон
 	boundary_condition!(A.μ)
 	boundary_condition!(A.fy)
 	boundary_condition!(A.fz)
 	interpolation_bc!(ρ)
+end
+
+function collect_sources!(ρ, A, g, particle::ParticleSet)
+	rho = similar(ρ);  rho .= 0
+	mu = similar(ρ);   mu  .= 0
+	fy = similar(ρ);   fy  .= 0
+	fz = similar(ρ);   fz  .= 0
+	@inbounds for k in 1:particle.N
+		j, l = g(particle.x[k])
+		r = 1 - l
+		rho[j]   += l
+		rho[j+1] += r
+		fy[j]   += l*particle.py[k]
+		fy[j+1] += r*particle.py[k]
+		fz[j]   += l*particle.pz[k]
+		fz[j+1] += r*particle.pz[k]
+	end
+	q = particle.q
+	q_m = q/particle.m
+	rho .*= q/g.Npc
+	mu .= rho .* (q_m/g.Npc)
+	fy .*= q_m/g.Npc
+	fz .*= q_m/g.Npc
+	boundary_condition!(rho)
+	rho .-= q  # ионный фон
+	boundary_condition!(mu)
+	boundary_condition!(fy)
+	boundary_condition!(fz)
+	interpolation_bc!(rho)
+	ρ .+= rho
+	A.μ .+= mu
+	A.fy .+= fy
+	A.fz .+= fz
+end
+
+function collect_sources!(ρ, A, g, species::Vector{<:ParticleSet})
+	ρ .= 0
+	A.μ .= 0
+	A.fy .= 0
+	A.fz .= 0
+	for particle in species
+		collect_sources!(ρ, A, g, particle)
+	end
 end
 
 function scalar_potential!(ϕ, ρ, g)
@@ -326,7 +374,7 @@ function prestart!(e, i, ρ, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
 	i.py .*= u/uʸ
 	i.pz .*= u/uᶻ
 	@showprogress 1 "Prestart... " for t in time
-		sources!(ρ, A, e, i, g)
+		collect_sources!(ρ, A, g, [e, i])
 		scalar_potential!(φ, ρ, g)
 		gradient!(Ex, φ, g)
 		Ex .*= -1
@@ -351,7 +399,7 @@ function prestart!(e, ::Nothing, ρ, φ, Ex, B, A, g, time, u, (uˣ,uʸ,uᶻ))
 	e.py .*= u/uʸ
 	e.pz .*= u/uᶻ
 	@showprogress 1 "Prestart... " for t in time
-		sources!(ρ, A, e, g)
+		collect_sources!(ρ, A, g, [e])
 		scalar_potential!(φ, ρ, g)
 		gradient!(Ex, φ, g)
 		Ex .*= -1
@@ -413,7 +461,8 @@ function simulation!(e, i, ρ, φ, Ex, B, A, g, time, dir)
 	Ki = zeros(length(time))
 	dt = step(time)
 	@showprogress 1 "Computing..." for t in eachindex(time)
-		sources!(ρ, A, e, i, g)
+		# sources!(ρ, A, e, i, g)
+		collect_sources!(ρ, A, g, [e, i])
 		scalar_potential!(φ, ρ, g)
 		gradient!(Ex, φ, g)
 		Ex .*= -1
@@ -456,7 +505,7 @@ function simulation!(e, ::Nothing, ρ, φ, Ex, B, A, g, time, dir)
 	Ki = zeros(length(time))
 	dt = step(time)
 	@showprogress 1 "Computing..." for t in eachindex(time)
-		sources!(ρ, A, e, g)
+		collect_sources!(ρ, A, g, [e])
 		scalar_potential!(φ, ρ, g)
 		gradient!(Ex, φ, g)
 		Ex .*= -1
@@ -528,6 +577,11 @@ function VectorPotential{T}(g::Grid) where T
 	VectorPotential{T}(arrays...)
 end
 VectorPotential(g::Grid) = VectorPotential{Float64}(g)
+
+function Base.similar(A::VectorPotential{T}) where T
+	arrays = [similar(A.μ) for i in 1:fieldcount(VectorPotential)]
+	VectorPotential{T}(arrays...)
+end
 
 struct MagneticField{T}
 	y::OffsetVector{T,Vector{T}}
@@ -612,8 +666,8 @@ if !model.ion_bg
 end
 
 	num_model = NumericalModel(g)
-	model.ion_bg || sources!(num_model.ρ, num_model.A, e, i, num_model.g)
-	model.ion_bg && sources!(num_model.ρ, num_model.A, e, num_model.g)
+	model.ion_bg || collect_sources!(num_model.ρ, num_model.A, num_model.g, [e, i])
+	model.ion_bg && collect_sources!(num_model.ρ, num_model.A, num_model.g, [e])
 	scalar_potential!(num_model.φ, num_model.ρ, num_model.g)
 	gradient!(num_model.Ex, num_model.φ, num_model.g)
 	num_model.Ex .*= -1
