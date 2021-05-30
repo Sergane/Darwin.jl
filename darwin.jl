@@ -156,7 +156,7 @@ function collect_sources!(ρ, A, g, particle::ParticleSet)
 	fy .*= q_m/g.Npc
 	fz .*= q_m/g.Npc
 	boundary_condition!(rho)
-	rho .-= q  # ионный фон
+	rho .-= q  # ионный фон (!?!?!?)
 	boundary_condition!(mu)
 	boundary_condition!(fy)
 	boundary_condition!(fz)
@@ -167,33 +167,33 @@ function collect_sources!(ρ, A, g, particle::ParticleSet)
 	A.fz .+= fz
 end
 
-function init_sources!(ρ, A)
-	ρ .= 0
+function init_sources!(φ, A)
+	φ.ρ .= 0
 	A.μ .= 0
 	A.fy .= 0
 	A.fz .= 0
 	return
 end
 
-function collect_sources!(ρ, A, g, species::Vector{<:ParticleSet})
-	init_sources!(ρ, A)
+function collect_sources!(φ, A, g, species::Vector{<:ParticleSet})
+	init_sources!(φ, A)
 	for particle in species
-		collect_sources!(ρ, A, g, particle)
+		collect_sources!(φ.ρ, A, g, particle)
 	end
 end
 
-function scalar_potential!(ϕ, ρ, g)
+function scalar_potential!(φ, g)
 	h² = g.h^2
-	ϕ[1] = 0
+	φ.x[1] = 0
 	@simd for k in 1:g.N
-		@inbounds ϕ[1] += k*ρ[k]
+		@inbounds φ.x[1] += k*φ.ρ[k]
 	end
-	ϕ[1] *= -h²/g.N
-	ϕ[2] = -h²*ρ[1] + 2ϕ[1]
+	φ.x[1] *= -h²/g.N
+	φ.x[2] = -h²*φ.ρ[1] + 2φ.x[1]
 	for k in 3:g.N
-		@inbounds ϕ[k] = -h²*ρ[k-1] + 2ϕ[k-1] - ϕ[k-2]
+		@inbounds φ.x[k] = -h²*φ.ρ[k-1] + 2φ.x[k-1] - φ.x[k-2]
 	end
-	interpolation_bc!(ϕ)
+	interpolation_bc!(φ.x)
 end
 
 function gradient!(to, f, g)
@@ -223,8 +223,6 @@ function curl!(B, A, g)
     interpolation_bc!(B.z)
 end
 
-
-begin
 function field_energy(f, g)
     sum(f[g.in].^2)/(2*g.N)
 end
@@ -245,7 +243,6 @@ function kinetic_energy(s, A, g)
 		Kz += (s.pz[j] - s.q*(l*A.z[i]+r*A.z[i+1]))^2
 	end
 	Kx/(2*s.m*s.N), Ky/(2*s.m*s.N), Kz/(2*s.m*s.N)
-end
 end
 
 function current_densities!(Jx, Jy, Jz, A, e, g)
@@ -306,9 +303,9 @@ function prestart!(species, model, time, (uˣ,uʸ,uᶻ))
 		s.pz .*= u/uᶻ
 	end
 	@showprogress 1 "Prestart... " for t in time
-		collect_sources!(model.ρ, model.A, model.g, species)
-		scalar_potential!(model.φ, model.ρ, model.g)
-		gradient!(model.Ex, model.φ, model.g)
+		collect_sources!(model.φ, model.A, model.g, species)
+		scalar_potential!(model.φ, model.g)
+		gradient!(model.Ex, model.φ.x, model.g)
 		model.Ex .*= -1
 		vector_potential!(model.A, model.g)
 		curl!(model.B, model.A, model.g)
@@ -393,25 +390,21 @@ end
 
 function simulation!(species, model, time, dir)
 	g = model.g
-	ρ = model.ρ
 	φ = model.φ
+	A = model.A
 	Ex= model.Ex
 	B = model.B
-	A = model.A
-	Jx = similar(ρ)
-	Jy = similar(ρ)
-	Jz = similar(ρ)
+	Jx = similar(g.range)
+	Jy = similar(Jx)
+	Jz = similar(Jx)
 	dt = step(time)
 	field = Fields{Float64}(g.N, length(time))
 	J = [Densities{Float64}(g.N, length(time)) for i in eachindex(species)]
 	energy = Energies{Float64}(length(time), length(species))
 	@showprogress 1 "Computing..." for t in eachindex(time)
-		init_sources!(ρ, A)
-		for s in species
-			collect_sources!(ρ, A, g, s)
-		end
-		scalar_potential!(φ, ρ, g)
-		gradient!(Ex, φ, g)
+		collect_sources!(φ, A, g, species)
+		scalar_potential!(φ, g)
+		gradient!(Ex, φ.x, g)
 		Ex .*= -1
 		vector_potential!(A, g)
 		curl!(B, A, g)
@@ -433,8 +426,8 @@ function simulation!(species, model, time, dir)
 		# fields_time[t] = t
 		# fields_Jy[:,t] .= A.fy[g.in] .- A.μ[g.in].*A.y[g.in]
 		# fields_Jz[:,t] .= A.fz[g.in] .- A.μ[g.in].*A.z[g.in]
-		field.rho[:,t] .= ρ[g.in]
-		field.phi[:,t] .= φ[g.in]
+		field.rho[:,t] .= φ.ρ[g.in]
+		field.phi[:,t] .= φ.x[g.in]
 		field.Ay[:,t] .= A.y[g.in]
 		field.Az[:,t] .= A.z[g.in]
 		field.Ex[:,t] .= Ex[g.in]
@@ -465,6 +458,22 @@ struct Model
 	init_method::String
 	prestart_steps::Int
 end
+
+# скалярный потенциал и сеточные величины, необходимые для его расчета
+struct ScalarPotential{T}
+	x::OffsetVector{T,Vector{T}}
+	ρ::OffsetVector{T,Vector{T}}
+end
+function ScalarPotential{T}(N::Int) where T
+	arrays = [OffsetVector(zeros(N+2), 0:N+1) for i in 1:fieldcount(ScalarPotential)]
+	ScalarPotential{T}(arrays...)
+end
+ScalarPotential(N::Int) = ScalarPotential{Float64}(N)
+function ScalarPotential{T}(g::Grid) where T
+	arrays = [similar(g.range) for i in 1:fieldcount(ScalarPotential)]
+	ScalarPotential{T}(arrays...)
+end
+ScalarPotential(g::Grid) = ScalarPotential{Float64}(g)
 
 # векторный потенциал и сеточные величины, необходимые для его расчета
 struct VectorPotential{T}
@@ -508,23 +517,22 @@ MagneticField(g::Grid) = MagneticField{Float64}(g)
 # минимальная модель, необходимая для вычисления одной итерации
 struct NumericalModel{T}
 	g::Grid{T}
-	ρ::OffsetVector{T,Vector{T}}
-	φ::OffsetVector{T,Vector{T}}
+	φ::ScalarPotential{T}
+	A::VectorPotential{T}
 	Ex::OffsetVector{T,Vector{T}}
 	B::MagneticField{T}
-	A::VectorPotential{T}
 end
 
 function NumericalModel{T}(g::Grid) where T
-	ρ = similar(g.range)
-	φ = similar(ρ)
-	Ex = similar(ρ)
-	B = MagneticField(g)
+	φ = ScalarPotential(g)
 	A = VectorPotential(g)
+	Ex = similar(g.range)
+	B = MagneticField(g)
 	
-	NumericalModel{T}(g, ρ, φ, Ex, B, A)
+	NumericalModel{T}(g, φ, A, Ex, B)
 end
 NumericalModel(g) = NumericalModel{Float64}(g)
+
 
 let
 	model = Model(0:0.25:50,
@@ -576,9 +584,9 @@ end
 
 	num_model = NumericalModel(g)
 	
-	collect_sources!(num_model.ρ, num_model.A, num_model.g, species)
-	scalar_potential!(num_model.φ, num_model.ρ, num_model.g)
-	gradient!(num_model.Ex, num_model.φ, num_model.g)
+	collect_sources!(num_model.φ, num_model.A, num_model.g, species)
+	scalar_potential!(num_model.φ, num_model.g)
+	gradient!(num_model.Ex, num_model.φ.x, num_model.g)
 	num_model.Ex .*= -1
 	vector_potential!(num_model.A, num_model.g)
 	num_model.B.y .= 0
