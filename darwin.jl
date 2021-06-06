@@ -134,53 +134,64 @@ struct ParticleSet{T}
 	end
 end
 
-function collect_sources!(ρ, A, g, particle::ParticleSet)
-	rho = similar(ρ);  rho .= 0
-	mu = similar(ρ);   mu  .= 0
-	fy = similar(ρ);   fy  .= 0
-	fz = similar(ρ);   fz  .= 0
+##
+
+function collect_sources!(φ, A, grid, species::Vector{<:ParticleSet})
+	φ.ρ .= 0
+	A.μ .= 0
+	A.fy .= 0
+	A.fz .= 0
+
+	ρ = similar(φ.ρ)
+	μ = similar(A.μ)
+	fy = similar(A.fy)
+	fz = similar(A.fz)
+	Q = zero(eltype(φ.ρ))
+	for particle in species
+		Q += particle.q
+		collect_sources!(ρ, μ, fy, fz, grid, particle)
+		φ.ρ .+= ρ
+		A.μ .+= μ
+		A.fy .+= fy
+		A.fz .+= fz
+	end
+
+	φ.ρ .-= Q  # ионный фон
+
+	boundary_condition!(φ.ρ)
+	boundary_condition!(A.μ)
+	boundary_condition!(A.fy)
+	boundary_condition!(A.fz)
+	# interpolation_bc!(A.ρ)
+end
+
+function collect_sources!(ρ, μ, fy, fz, grid, particle::ParticleSet)
+	ρ .= 0
+	μ .= 0
+	fy .= 0
+	fz .= 0
 	@inbounds for k in 1:particle.N
-		j, l = g(particle.x[k])
+		j, l = grid(particle.x[k])
 		r = 1 - l
-		rho[j]   += l
-		rho[j+1] += r
+		ρ[j]    += l
+		ρ[j+1]  += r
 		fy[j]   += l*particle.py[k]
 		fy[j+1] += r*particle.py[k]
 		fz[j]   += l*particle.pz[k]
 		fz[j+1] += r*particle.pz[k]
 	end
+
+	PPC = grid.Npc
 	q = particle.q
 	q_m = q/particle.m
-	rho .*= q/g.Npc
-	mu .= rho .* (q_m/g.Npc)
-	fy .*= q_m/g.Npc
-	fz .*= q_m/g.Npc
-	boundary_condition!(rho)
-	rho .-= q  # ионный фон (!?!?!?)
-	boundary_condition!(mu)
-	boundary_condition!(fy)
-	boundary_condition!(fz)
-	interpolation_bc!(rho)
-	ρ .+= rho
-	A.μ .+= mu
-	A.fy .+= fy
-	A.fz .+= fz
+
+	ρ .*= q/PPC
+	μ .= ρ .* (q_m/PPC)
+	fy .*= q_m/PPC
+	fz .*= q_m/PPC
 end
 
-function init_sources!(φ, A)
-	φ.ρ .= 0
-	A.μ .= 0
-	A.fy .= 0
-	A.fz .= 0
-	return
-end
-
-function collect_sources!(φ, A, g, species::Vector{<:ParticleSet})
-	init_sources!(φ, A)
-	for particle in species
-		collect_sources!(φ.ρ, A, g, particle)
-	end
-end
+##
 
 function scalar_potential!(φ, g)
 	h² = g.h^2
