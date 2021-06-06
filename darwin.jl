@@ -573,9 +573,10 @@ let
 	# вывести здесь параметры модели 
 
 	#step(time)*√(uˣ^2+uʸ^2+uᶻ^2) ≤ L/2Nc
+	init_particles! = getfield(Main, Symbol("init_", params.init_method, '!'))
 
 	e = ParticleSet{Float64}(-1, 1, params.Npc, g.N)
-	eval(Symbol("init_"*params.init_method*'!'))(e, params.L, (params.uˣ,params.uʸ,params.uᶻ)./√2..., (2,3,7,5))
+	init_particles!(e, params.L, (params.uˣ,params.uʸ,params.uᶻ)./√2..., (2,3,7,5))
 	e.px .*= e.m
 	e.py .*= e.m
 	e.pz .*= e.m
@@ -586,7 +587,7 @@ let
 if !params.ion_bg
 	i = ParticleSet{Float64}(1, 1836, params.Npc, g.N)
 	K = √(e.m / i.m)
-	eval(Symbol("init_"*params.init_method*'!'))(i, params.L, (params.uˣ,params.uʸ,params.uᶻ).*(K/√2)..., (2,3,7,5))
+	init_particles!(i, params.L, (params.uˣ,params.uʸ,params.uᶻ).*(K/√2)..., (2,3,7,5))
 	i.px .*= i.m
 	i.py .*= i.m
 	i.pz .*= i.m
