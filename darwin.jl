@@ -305,7 +305,7 @@ function leap_frog!(s, dt, Ex, B, A, g)
 end
 
 
-function prestart!(species, model, time, (uˣ,uʸ,uᶻ))
+function prestart!(species, params, time, (uˣ,uʸ,uᶻ))
 	u = min(uˣ,uʸ,uᶻ)
 	dt = step(time)
 	for s in species
@@ -314,14 +314,14 @@ function prestart!(species, model, time, (uˣ,uʸ,uᶻ))
 		s.pz .*= u/uᶻ
 	end
 	@showprogress 1 "Prestart... " for t in time
-		collect_sources!(model.φ, model.A, model.g, species)
-		scalar_potential!(model.φ, model.g)
-		gradient!(model.Ex, model.φ.x, model.g)
-		model.Ex .*= -1
-		vector_potential!(model.A, model.g)
-		curl!(model.B, model.A, model.g)
+		collect_sources!(params.φ, params.A, params.g, species)
+		scalar_potential!(params.φ, params.g)
+		gradient!(params.Ex, params.φ.x, params.g)
+		params.Ex .*= -1
+		vector_potential!(params.A, params.g)
+		curl!(params.B, params.A, params.g)
 		for s in species
-			leap_frog!(s, dt, model.Ex, model.B, model.A, model.g)
+			leap_frog!(s, dt, params.Ex, params.B, params.A, params.g)
 		end
 	end
 	for s in species
@@ -399,12 +399,12 @@ function write_SoA(dir, obj)
 	end
 end
 
-function simulation!(species, model, time, dir)
-	g = model.g
-	φ = model.φ
-	A = model.A
-	Ex= model.Ex
-	B = model.B
+function simulation!(species, params, time, dir)
+	g = params.g
+	φ = params.φ
+	A = params.A
+	Ex= params.Ex
+	B = params.B
 	Jx = similar(g.range)
 	Jy = similar(Jx)
 	Jz = similar(Jx)
@@ -457,7 +457,7 @@ end
 
 ## Параметры:
 
-struct Model
+struct Parameters
 	time::AbstractRange
 	L::Float64
 	Nc::Int
@@ -546,7 +546,7 @@ NumericalModel(g) = NumericalModel{Float64}(g)
 
 
 let
-	model = Model(0:0.25:50,
+	params = Parameters(0:0.25:50,
 		5.24,
 		256,
 		1000,
@@ -556,8 +556,8 @@ let
 		false,
 		"rand",
 		50)
-	g = Grid(model.L, model.Nc, model.Npc)
-	println("A: $((model.uᶻ/model.uˣ)^2-1)")
+	g = Grid(params.L, params.Nc, params.Npc)
+	println("A: $((params.uᶻ/params.uˣ)^2-1)")
 	
 	dir = isempty(ARGS) ? "test/" : ARGS[1]*"/"
 	mkpath(dir)
@@ -572,7 +572,7 @@ let
 	N = g.Npc*g.N  # количество модельных частиц
 
 	e = ParticleSet{Float64}(-1, 1, N)
-	eval(Symbol("init_"*model.init_method*'!'))(e, model.L, (model.uˣ,model.uʸ,model.uᶻ)./√2..., (2,3,7,5))
+	eval(Symbol("init_"*params.init_method*'!'))(e, params.L, (params.uˣ,params.uʸ,params.uᶻ)./√2..., (2,3,7,5))
 	e.px .*= e.m
 	e.py .*= e.m
 	e.pz .*= e.m
@@ -580,10 +580,10 @@ let
 	write_SoA(dir*"init_electron.h5", e)
 
 	i = nothing
-if !model.ion_bg
+if !params.ion_bg
 	i = ParticleSet{Float64}(1, 1836, N)
 	K = √(e.m / i.m)
-	eval(Symbol("init_"*model.init_method*'!'))(i, model.L, (model.uˣ,model.uʸ,model.uᶻ).*(K/√2)..., (2,3,7,5))
+	eval(Symbol("init_"*params.init_method*'!'))(i, params.L, (params.uˣ,params.uʸ,params.uᶻ).*(K/√2)..., (2,3,7,5))
 	i.px .*= i.m
 	i.py .*= i.m
 	i.pz .*= i.m
@@ -591,21 +591,21 @@ if !model.ion_bg
 	write_SoA(dir*"init_ion.h5", i)
 end
 	species = [e]
-	model.ion_bg || push!(species, i)
+	params.ion_bg || push!(species, i)
 
-	num_model = NumericalModel(g)
+	model = NumericalModel(g)
 	
-	collect_sources!(num_model.φ, num_model.A, num_model.g, species)
-	scalar_potential!(num_model.φ, num_model.g)
-	gradient!(num_model.Ex, num_model.φ.x, num_model.g)
-	num_model.Ex .*= -1
-	vector_potential!(num_model.A, num_model.g)
-	num_model.B.y .= 0
-	num_model.B.z .= 0
+	collect_sources!(model.φ, model.A, model.g, species)
+	scalar_potential!(model.φ, model.g)
+	gradient!(model.Ex, model.φ.x, model.g)
+	model.Ex .*= -1
+	vector_potential!(model.A, model.g)
+	model.B.y .= 0
+	model.B.z .= 0
 
 	for s in species
-		leap_frog_halfstep!(s, step(model.time), num_model.Ex, num_model.g)
+		leap_frog_halfstep!(s, step(params.time), model.Ex, model.g)
 	end
-	prestart!(species, num_model, model.time[1:model.prestart_steps], (model.uˣ, model.uʸ, model.uᶻ))
-	simulation!(species, num_model, model.time, dir)
+	prestart!(species, model, params.time[1:params.prestart_steps], (params.uˣ, params.uʸ, params.uᶻ))
+	simulation!(species, model, params.time, dir)
 end
