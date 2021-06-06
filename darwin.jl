@@ -4,16 +4,15 @@ struct Grid{T} <: AbstractVector{T}
 	range::OffsetVector{T,<:AbstractRange{T}}
 	in::Base.OneTo{Int64}
 	h::T
-	N::Int
-	Npc::Int
+	N::UInt
 	L::T
-	function Grid{T}(L, Nc, Npc) where T
-		h = L / Nc
-		grid = range(-h/2, L+h/2, length=Nc+2)
-      	new{T}(OffsetVector(grid, 0:Nc+1), Base.OneTo(Nc), step(grid), Nc, Npc, L)
+	function Grid{T}(L, N) where T
+		h = L / N
+		grid = range(-h/2, L+h/2, length=N+2)
+      	new{T}(OffsetVector(grid, 0:N+1), Base.OneTo(N), step(grid), N, L)
   	end
 end
-Grid(L, Nc, Npc) = Grid{Float64}(L, Nc, Npc)
+Grid(L, N) = Grid{Float64}(L, N)
 Base.size(g::Grid) = size(g.range)
 Base.axes(g::Grid) = axes(g.range)
 Base.IndexStyle(::Type{<:Grid}) = IndexLinear()
@@ -123,14 +122,16 @@ struct ParticleSet{T}
 	pz::Vector{T}
 	q::Float64
 	m::Float64
+	PPC::UInt  # Particles Per Cell
 	N::UInt
 
-	function ParticleSet{T}(q, m, N) where {T<:Real}
+	function ParticleSet{T}(q, m, PPC, cells_num) where {T<:Real}
+		N = PPC * cells_num
 		new(zeros(T,N),
 			zeros(T,N),
 			zeros(T,N),
 			zeros(T,N),
-			q, m, N)
+			q, m, PPC, N)
 	end
 end
 
@@ -179,7 +180,7 @@ function collect_sources!(ρ, μ, fy, fz, grid, particle::ParticleSet)
 		fz[j+1] += r*particle.pz[k]
 	end
 
-	PPC = grid.Npc
+	PPC = particle.PPC
 	q = particle.q
 	q_m = q/particle.m
 
@@ -190,7 +191,9 @@ function collect_sources!(ρ, μ, fy, fz, grid, particle::ParticleSet)
 end
 
 @inline function mean_charge(species, grid)
-	sum(particles.q for particles in species)
+	Q_sum = sum(particles.q * particles.PPC for particles in species)
+	PPC_sum = sum(particles.PPC for particles in species)
+	Q_sum / PPC_sum
 end
 
 ##
@@ -558,7 +561,7 @@ let
 		false,
 		"rand",
 		50)
-	g = Grid(params.L, params.Nc, params.Npc)
+	g = Grid(params.L, params.Nc)
 	println("A: $((params.uᶻ/params.uˣ)^2-1)")
 	
 	dir = isempty(ARGS) ? "test/" : ARGS[1]*"/"
@@ -571,9 +574,7 @@ let
 
 	#step(time)*√(uˣ^2+uʸ^2+uᶻ^2) ≤ L/2Nc
 
-	N = g.Npc*g.N  # количество модельных частиц
-
-	e = ParticleSet{Float64}(-1, 1, N)
+	e = ParticleSet{Float64}(-1, 1, params.Npc, g.N)
 	eval(Symbol("init_"*params.init_method*'!'))(e, params.L, (params.uˣ,params.uʸ,params.uᶻ)./√2..., (2,3,7,5))
 	e.px .*= e.m
 	e.py .*= e.m
@@ -583,7 +584,7 @@ let
 
 	i = nothing
 if !params.ion_bg
-	i = ParticleSet{Float64}(1, 1836, N)
+	i = ParticleSet{Float64}(1, 1836, params.Npc, g.N)
 	K = √(e.m / i.m)
 	eval(Symbol("init_"*params.init_method*'!'))(i, params.L, (params.uˣ,params.uʸ,params.uᶻ).*(K/√2)..., (2,3,7,5))
 	i.px .*= i.m
