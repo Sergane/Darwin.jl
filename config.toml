@@ -9,29 +9,27 @@ charge = [ -1,       1]
 
 # electron
 [[physical.species.V_distribution]]
-type = "Normal"
-params = [0.01, 0.01, 0.05]
+type = "normal"
+params = [0.0316, 0.0316, 0.1]
 [[physical.species.R_distribution]]
-type = "Uniform"
+type = "uniform"
 
 # ion
 [[physical.species.V_distribution]]
-type = "Normal"
-params = [0.01, 0.01, 0.01]
+type = "normal"
+params = [0.0316, 0.0316, 0.1]
 [[physical.species.R_distribution]]
-type = "Uniform"
+type = "uniform"
 
-[physical.boundary]
-left = 0.0
-right = 10.0
-#periodic = true
-time = 30000
+[physical.domain_size]
+space = 5.24
+time = 50
 
 [numerical]
-nodes_num = 10  #grid_step = 1.0
+cells_num = 256
 time_step = 0.25
-particles_per_cell = [2048, 2048]
-particle_pusher = "Leapfrog"
+particles_per_cell = [1000, 1000]
+prestart_steps = 50
 
 [out]
 particle_dens_span = [10, 50]

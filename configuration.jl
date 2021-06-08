@@ -1,5 +1,3 @@
-# export  Configuration
-
 using TOML
 
 struct Configuration
@@ -48,6 +46,59 @@ end
 # rstrip здесь убирает лишний перенос строки в конце
 Base.show(io::IO, config::Configuration) = print(io, rstrip(dict_to_str(config.data),'\n'))
 
-## test
-config = Configuration("$(@__DIR__)/config.toml")
-println(config)
+struct ParticleParameters
+    name::String
+    charge::Float64
+    mass::Float64
+    ppc::Int
+    V_distribution::String
+    V_params::NTuple{3,Float64}
+    R_distribution::String
+end
+
+function ParticleParameters(ind::Int, species, ppc)
+    name = species["name"][ind]
+    mass = species["mass"][ind]
+    charge = species["charge"][ind]
+    V_distr  = species["V_distribution"][ind]["type"]
+    V_params = Tuple(a for a in species["V_distribution"][ind]["params"])
+    R_distr  = species["R_distribution"][ind]["type"]
+    ParticleParameters(name, charge, mass, ppc, V_distr, V_params, R_distr)
+end
+
+struct NumericalParameters
+	time::AbstractRange
+	L::Float64
+	cells_num::Int
+	prestart_steps::Int
+    species::Vector{ParticleParameters}
+end
+
+function NumericalParameters(numerical, domain_size, species)
+    L = domain_size["space"]
+    T = domain_size["time"]
+
+    cells_num = numerical["cells_num"]
+    time_step = numerical["time_step"]
+    prestart_steps = numerical["prestart_steps"]
+
+    ppc_vector = numerical["particles_per_cell"]
+    partical_params = [ParticleParameters(i, species, ppc) for (i,ppc) in enumerate(ppc_vector)]
+
+    NumericalParameters(0:time_step:T, L, cells_num, prestart_steps, partical_params)
+end
+
+function NumericalParameters(config::Configuration)
+    NumericalParameters(config.data["numerical"],
+        config.data["physical"]["domain_size"],
+        config.data["physical"]["species"])
+end
+
+function Base.show(io::IO, params::NumericalParameters)
+    "NumericalParameters(\n" *
+    "  time: $(params.time),\n" *
+    "  L: $(params.L),\n" *
+    "  cells num: $(params.cells_num),\n" *
+    "  prestart steps: $(params.prestart_steps)\n" *
+    ")" |> print
+end

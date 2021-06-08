@@ -4,7 +4,7 @@ struct Grid{T} <: AbstractVector{T}
 	range::OffsetVector{T,<:AbstractRange{T}}
 	in::Base.OneTo{Int64}
 	h::T
-	N::UInt
+	N::Int
 	L::T
 	function Grid{T}(L, N) where T
 		h = L / N
@@ -69,51 +69,18 @@ end
 
 ## Частицы и их начальное распределение:
 
-function hammersley(p, N)
-	# p - простое число
-	if p == 1
-		return [1/2 : N-1/2 ...]/N
-	end
-	seq = zeros(N)
-	for k = 1:N
-		k!, p! = k, p
-		while k! > 0
-			a = k! % p
-			seq[k] += a / p!
-			k! = k! ÷ p
-			p! *= p
-		end
-	end
-	return seq
-end
-
 using Distributions
 
-uniform_rand(L, N) = rand(Uniform(0,L), N)
-normal_rand(σ, N) = rand(Normal(0,σ),N)
-uniform_quiet_H(p, L, N) = hammersley(p,N) * L
+rand_uniform(L, N) = rand(Uniform(0,L), N)
+rand_normal(σ, N) = rand(Normal(0,σ), N)
 
-function normal_quiet_H(p, σ, N)
-	√2σ*erfinv.(hammersley(p, N)*2 .- 1)
-end
-
-function init_rand!(s, L, σˣ, σʸ, σᶻ)
-	s.x .= uniform_rand(L, s.N)
-	s.px .= normal_rand(σˣ, s.N)
-	s.py .= normal_rand(σʸ, s.N)
-	s.pz .= normal_rand(σᶻ, s.N)
-	return
-end
-
-init_rand!(s, L, σˣ, σʸ, σᶻ, ::Any) = init_rand!(s, L, σˣ, σʸ, σᶻ)
-
-function init_quiet_H!(s, L, σˣ, σʸ, σᶻ, (p₁,p₂,p₃,p₄))
-	s.x .= uniform_quiet_H(p₁, L, s.N)
-	s.px .= normal_quiet_H(p₂, σˣ, s.N)
-	s.py .= normal_quiet_H(p₃, σʸ, s.N)
-	s.pz .= normal_quiet_H(p₄, σᶻ, s.N)
-	return
-end
+# function init_rand!(s, L, σˣ, σʸ, σᶻ)
+# 	s.x .= rand_uniform(L, s.N)
+# 	s.px .= rand_normal(σˣ, s.N)
+# 	s.py .= rand_normal(σʸ, s.N)
+# 	s.pz .= rand_normal(σᶻ, s.N)
+# 	return
+# end
 
 struct ParticleSet{T}
 	x::Vector{T}
@@ -122,8 +89,8 @@ struct ParticleSet{T}
 	pz::Vector{T}
 	q::Float64
 	m::Float64
-	PPC::UInt  # Particles Per Cell
-	N::UInt
+	PPC::Int  # Particles Per Cell
+	N::Int
 
 	function ParticleSet{T}(q, m, PPC, cells_num) where {T<:Real}
 		N = PPC * cells_num
@@ -310,29 +277,23 @@ function leap_frog!(s, dt, Ex, B, A, g)
 end
 
 
-function prestart!(species, params, time, (uˣ,uʸ,uᶻ))
-	u = min(uˣ,uʸ,uᶻ)
+function prestart!(species, model, time)
+	g = model.g
+	φ = model.φ
+	A = model.A
+	Ex= model.Ex
+	B = model.B
 	dt = step(time)
-	for s in species
-		s.px .*= u/uˣ
-		s.py .*= u/uʸ
-		s.pz .*= u/uᶻ
-	end
 	@showprogress 1 "Prestart... " for t in time
-		collect_sources!(params.φ, params.A, params.g, species)
-		scalar_potential!(params.φ, params.g)
-		gradient!(params.Ex, params.φ.x, params.g)
-		params.Ex .*= -1
-		vector_potential!(params.A, params.g)
-		curl!(params.B, params.A, params.g)
+		collect_sources!(φ, A, g, species)
+		scalar_potential!(φ, g)
+		gradient!(Ex, φ.x, g)
+		Ex .*= -1
+		vector_potential!(A, g)
+		curl!(B, A, g)
 		for s in species
-			leap_frog!(s, dt, params.Ex, params.B, params.A, params.g)
+			leap_frog!(s, dt, Ex, B, A, g)
 		end
-	end
-	for s in species
-		s.px .*= uˣ/u
-		s.py .*= uʸ/u
-		s.pz .*= uᶻ/u
 	end
 end
 
@@ -404,12 +365,12 @@ function write_SoA(dir, obj)
 	end
 end
 
-function simulation!(species, params, time, dir)
-	g = params.g
-	φ = params.φ
-	A = params.A
-	Ex= params.Ex
-	B = params.B
+function simulation!(species, model, time, dir)
+	g = model.g
+	φ = model.φ
+	A = model.A
+	Ex= model.Ex
+	B = model.B
 	Jx = similar(g.range)
 	Jy = similar(Jx)
 	Jz = similar(Jx)
@@ -457,22 +418,6 @@ function simulation!(species, params, time, dir)
 		write_SoA(dir*"kinetic_energies_"*string(i)*".h5", energy.K[i])
 		# write_SoA(dir*"J_"*string(i)*".h5", J[i])
 	end
-end
-
-
-## Параметры:
-
-struct Parameters
-	time::AbstractRange
-	L::Float64
-	Nc::Int
-	Npc::Int
-	uˣ::Float64
-	uʸ::Float64
-	uᶻ::Float64
-	ion_bg::Bool
-	init_method::String
-	prestart_steps::Int
 end
 
 # скалярный потенциал и сеточные величины, необходимые для его расчета
@@ -549,20 +494,15 @@ function NumericalModel{T}(g::Grid) where T
 end
 NumericalModel(g) = NumericalModel{Float64}(g)
 
+include("configuration.jl")
 
 let
-	params = Parameters(0:0.25:50,
-		5.24,
-		256,
-		1000,
-		0.0316,
-		0.0316,
-		0.1,
-		false,
-		"rand",
-		50)
-	g = Grid(params.L, params.Nc)
-	println("A: $((params.uᶻ/params.uˣ)^2-1)")
+	config = Configuration("$(@__DIR__)/config.toml")
+	println(config)
+
+	params = NumericalParameters(config)
+
+	g = Grid(params.L, params.cells_num)
 	
 	dir = isempty(ARGS) ? "test/" : ARGS[1]*"/"
 	mkpath(dir)
@@ -573,29 +513,21 @@ let
 	# вывести здесь параметры модели 
 
 	#step(time)*√(uˣ^2+uʸ^2+uᶻ^2) ≤ L/2Nc
-	init_particles! = getfield(Main, Symbol("init_", params.init_method, '!'))
 
-	e = ParticleSet{Float64}(-1, 1, params.Npc, g.N)
-	init_particles!(e, params.L, (params.uˣ,params.uʸ,params.uᶻ)./√2..., (2,3,7,5))
-	e.px .*= e.m
-	e.py .*= e.m
-	e.pz .*= e.m
-
-	write_SoA(dir*"init_electron.h5", e)
-
-	i = nothing
-if !params.ion_bg
-	i = ParticleSet{Float64}(1, 1836, params.Npc, g.N)
-	K = √(e.m / i.m)
-	init_particles!(i, params.L, (params.uˣ,params.uʸ,params.uᶻ).*(K/√2)..., (2,3,7,5))
-	i.px .*= i.m
-	i.py .*= i.m
-	i.pz .*= i.m
-
-	write_SoA(dir*"init_ion.h5", i)
-end
-	species = [e]
-	params.ion_bg || push!(species, i)
+	species = ParticleSet[]
+	for particle in params.species
+		set = ParticleSet{Float64}(particle.charge, particle.mass, particle.ppc, params.cells_num)
+		m = particle.mass
+		init_V = getfield(Main, Symbol("rand_", particle.V_distribution))
+		Vth = particle.V_params .* √(1/m)
+		set.px .= init_V(Vth[1], set.N) .* m
+		set.py .= init_V(Vth[2], set.N) .* m
+		set.pz .= init_V(Vth[3], set.N) .* m
+		init_R = getfield(Main, Symbol("rand_", particle.R_distribution))
+		set.x .= init_R(params.L, set.N)
+		push!(species, set)
+		write_SoA(dir * "init_" * particle.name * ".h5", set)
+	end
 
 	model = NumericalModel(g)
 	
@@ -610,6 +542,18 @@ end
 	for s in species
 		leap_frog_halfstep!(s, step(params.time), model.Ex, model.g)
 	end
-	prestart!(species, model, params.time[1:params.prestart_steps], (params.uˣ, params.uʸ, params.uᶻ))
+
+	# u = min(uˣ,uʸ,uᶻ)
+	# for s in species
+	# 	s.px .*= u/uˣ
+	# 	s.py .*= u/uʸ
+	# 	s.pz .*= u/uᶻ
+	# end
+	prestart!(species, model, params.time[1:params.prestart_steps])
+	# for s in species
+	# 	s.px .*= uˣ/u
+	# 	s.py .*= uʸ/u
+	# 	s.pz .*= uᶻ/u
+	# end
 	simulation!(species, model, params.time, dir)
 end
