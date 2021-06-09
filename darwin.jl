@@ -67,6 +67,8 @@ function boundary_condition!(field)
 	nothing
 end
 
+include("configuration.jl")
+
 ## Частицы и их начальное распределение:
 
 using Distributions
@@ -91,15 +93,30 @@ struct ParticleSet{T}
 	m::Float64
 	PPC::Int  # Particles Per Cell
 	N::Int
+	name::String
 
-	function ParticleSet{T}(q, m, PPC, cells_num) where {T<:Real}
+	function ParticleSet{T}(q, m, PPC, cells_num, name) where {T<:Real}
 		N = PPC * cells_num
 		new(zeros(T,N),
 			zeros(T,N),
 			zeros(T,N),
 			zeros(T,N),
-			q, m, PPC, N)
+			q, m, PPC, N, name)
 	end
+end
+
+function ParticleSet{T}(params::ParticleParameters, cells_num, L) where {T<:Real}
+	set = ParticleSet{T}(params.charge, params.mass, params.ppc, cells_num, params.name)
+
+	init_V = getfield(Main, Symbol("rand_", params.V_distribution))
+	Vth = params.V_params .* √(1/set.m)
+	set.px .= init_V(Vth[1], set.N) .* set.m
+	set.py .= init_V(Vth[2], set.N) .* set.m
+	set.pz .= init_V(Vth[3], set.N) .* set.m
+	init_R = getfield(Main, Symbol("rand_", params.R_distribution))
+	set.x .= init_R(L, set.N)
+
+	set
 end
 
 ##
@@ -477,6 +494,7 @@ MagneticField(g::Grid) = MagneticField{Float64}(g)
 
 # минимальная модель, необходимая для вычисления одной итерации
 struct NumericalModel{T}
+	species::Vector{ParticleSet{T}}
 	g::Grid{T}
 	φ::ScalarPotential{T}
 	A::VectorPotential{T}
@@ -484,25 +502,27 @@ struct NumericalModel{T}
 	B::MagneticField{T}
 end
 
-function NumericalModel{T}(g::Grid) where T
+function NumericalModel{T}(params::NumericalParameters) where T
+	species = ParticleSet{T}[]
+	for particle in params.species
+		set = ParticleSet{Float64}(particle, params.cells_num, params.L)
+		push!(species, set)
+	end
+
+	g = Grid(params.L, params.cells_num)
 	φ = ScalarPotential(g)
 	A = VectorPotential(g)
 	Ex = similar(g.range)
 	B = MagneticField(g)
-	
-	NumericalModel{T}(g, φ, A, Ex, B)
+	NumericalModel{T}(species, g, φ, A, Ex, B)
 end
-NumericalModel(g) = NumericalModel{Float64}(g)
-
-include("configuration.jl")
+NumericalModel(params) = NumericalModel{Float64}(params)
 
 let
 	config = Configuration("$(@__DIR__)/config.toml")
 	println(config)
-
 	params = NumericalParameters(config)
-
-	g = Grid(params.L, params.cells_num)
+	model = NumericalModel(params)
 	
 	dir = isempty(ARGS) ? "test/" : ARGS[1]*"/"
 	mkpath(dir)
@@ -514,24 +534,11 @@ let
 
 	#step(time)*√(uˣ^2+uʸ^2+uᶻ^2) ≤ L/2Nc
 
-	species = ParticleSet[]
-	for particle in params.species
-		set = ParticleSet{Float64}(particle.charge, particle.mass, particle.ppc, params.cells_num)
-		m = particle.mass
-		init_V = getfield(Main, Symbol("rand_", particle.V_distribution))
-		Vth = particle.V_params .* √(1/m)
-		set.px .= init_V(Vth[1], set.N) .* m
-		set.py .= init_V(Vth[2], set.N) .* m
-		set.pz .= init_V(Vth[3], set.N) .* m
-		init_R = getfield(Main, Symbol("rand_", particle.R_distribution))
-		set.x .= init_R(params.L, set.N)
-		push!(species, set)
-		write_SoA(dir * "init_" * particle.name * ".h5", set)
+	for set in model.species
+		write_SoA(dir * "init_" * set.name * ".h5", set)
 	end
-
-	model = NumericalModel(g)
 	
-	collect_sources!(model.φ, model.A, model.g, species)
+	collect_sources!(model.φ, model.A, model.g, model.species)
 	scalar_potential!(model.φ, model.g)
 	gradient!(model.Ex, model.φ.x, model.g)
 	model.Ex .*= -1
@@ -539,7 +546,7 @@ let
 	model.B.y .= 0
 	model.B.z .= 0
 
-	for s in species
+	for s in model.species
 		leap_frog_halfstep!(s, step(params.time), model.Ex, model.g)
 	end
 
@@ -549,11 +556,11 @@ let
 	# 	s.py .*= u/uʸ
 	# 	s.pz .*= u/uᶻ
 	# end
-	prestart!(species, model, params.time[1:params.prestart_steps])
+	prestart!(model.species, model, params.time[1:params.prestart_steps])
 	# for s in species
 	# 	s.px .*= uˣ/u
 	# 	s.py .*= uʸ/u
 	# 	s.pz .*= uᶻ/u
 	# end
-	simulation!(species, model, params.time, dir)
+	simulation!(model.species, model, params.time, dir)
 end
