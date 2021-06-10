@@ -67,9 +67,10 @@ function ParticleParameters(ind::Int, species, ppc)
 end
 
 struct NumericalParameters
-	time::AbstractRange
 	L::Float64
 	cells_num::Int
+    T::Float64
+    dt::Float64
 	prestart_steps::Int
     species::Vector{ParticleParameters}
 end
@@ -85,7 +86,7 @@ function NumericalParameters(numerical, domain_size, species)
     ppc_vector = numerical["particles_per_cell"]
     partical_params = [ParticleParameters(i, species, ppc) for (i,ppc) in enumerate(ppc_vector)]
 
-    NumericalParameters(0:time_step:T, L, cells_num, prestart_steps, partical_params)
+    NumericalParameters(L, cells_num, T, time_step, prestart_steps, partical_params)
 end
 
 function NumericalParameters(config::Configuration)
@@ -96,7 +97,8 @@ end
 
 function Base.show(io::IO, params::NumericalParameters)
     "NumericalParameters(\n" *
-    "  time: $(params.time),\n" *
+    "  T: $(params.T),\n" *
+    "  dt: $(params.dt),\n" *
     "  L: $(params.L),\n" *
     "  cells num: $(params.cells_num),\n" *
     "  prestart steps: $(params.prestart_steps)\n" *

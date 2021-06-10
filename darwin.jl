@@ -495,6 +495,7 @@ MagneticField(g::Grid) = MagneticField{Float64}(g)
 # минимальная модель, необходимая для вычисления одной итерации
 struct NumericalModel{T}
 	species::Vector{ParticleSet{T}}
+	time::AbstractRange
 	g::Grid{T}
 	φ::ScalarPotential{T}
 	A::VectorPotential{T}
@@ -509,12 +510,14 @@ function NumericalModel{T}(params::NumericalParameters) where T
 		push!(species, set)
 	end
 
+	time = 0 : params.dt : params.T
+
 	g = Grid(params.L, params.cells_num)
 	φ = ScalarPotential(g)
 	A = VectorPotential(g)
 	Ex = similar(g.range)
 	B = MagneticField(g)
-	NumericalModel{T}(species, g, φ, A, Ex, B)
+	NumericalModel{T}(species, time, g, φ, A, Ex, B)
 end
 NumericalModel(params) = NumericalModel{Float64}(params)
 
@@ -547,7 +550,7 @@ let
 	model.B.z .= 0
 
 	for s in model.species
-		leap_frog_halfstep!(s, step(params.time), model.Ex, model.g)
+		leap_frog_halfstep!(s, step(model.time), model.Ex, model.g)
 	end
 
 	# u = min(uˣ,uʸ,uᶻ)
@@ -556,11 +559,11 @@ let
 	# 	s.py .*= u/uʸ
 	# 	s.pz .*= u/uᶻ
 	# end
-	prestart!(model.species, model, params.time[1:params.prestart_steps])
+	prestart!(model.species, model, model.time[1:params.prestart_steps])
 	# for s in species
 	# 	s.px .*= uˣ/u
 	# 	s.py .*= uʸ/u
 	# 	s.pz .*= uᶻ/u
 	# end
-	simulation!(model.species, model, params.time, dir)
+	simulation!(model.species, model, model.time, dir)
 end
