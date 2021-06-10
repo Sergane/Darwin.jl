@@ -139,7 +139,7 @@ function collect_sources!(φ, A, grid, species::Vector{<:ParticleSet})
 		A.fz .+= fz
 	end
 
-	φ.ρ .-= mean_charge(species, grid)  # ионный фон
+	φ.ρ .-= mean_charge(species)  # ионный фон
 
 	boundary_condition!(φ.ρ)
 	boundary_condition!(A.μ)
@@ -166,15 +166,15 @@ function collect_sources!(ρ, μ, fy, fz, grid, particle::ParticleSet)
 
 	PPC = particle.PPC
 	q = particle.q
-	q_m = q/particle.m
+	β = q / (particle.m * PPC)
 
-	ρ .*= q/PPC
-	μ .= ρ .* (q_m/PPC)
-	fy .*= q_m/PPC
-	fz .*= q_m/PPC
+	ρ .*= q / PPC
+	μ .= ρ .* β
+	fy .*= β
+	fz .*= β
 end
 
-@inline function mean_charge(species, grid)
+@inline function mean_charge(species)
 	Q_sum = sum(particles.q * particles.PPC for particles in species)
 	PPC_sum = sum(particles.PPC for particles in species)
 	Q_sum / PPC_sum
