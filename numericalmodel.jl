@@ -63,16 +63,32 @@ end
 
 using Distributions
 
-rand_uniform(L, N) = rand(Uniform(0,L), N)
-rand_normal(σ, N) = rand(Normal(0,σ), N)
+rand_uniform(L, N, _) = rand(Uniform(0,L), N)
+rand_normal(σ, N, _) = rand(Normal(0,σ), N)
 
-# function init_rand!(s, L, σˣ, σʸ, σᶻ)
-# 	s.x .= rand_uniform(L, s.N)
-# 	s.px .= rand_normal(σˣ, s.N)
-# 	s.py .= rand_normal(σʸ, s.N)
-# 	s.pz .= rand_normal(σᶻ, s.N)
-# 	return
-# end
+function hammersley(N, p)
+	# p - простое число
+	if p == 1
+		return [1/2 : N-1/2 ...]/N
+	end
+	seq = zeros(N)
+	for k = 1:N
+		k!, p! = k, p
+		while k! > 0
+			a = k! % p
+			seq[k] += a / p!
+			k! = k! ÷ p
+			p! *= p
+		end
+	end
+	return seq
+end
+rand_uniform_quiet(L, N, p) = hammersley(N, p) * L
+
+using SpecialFunctions: erfinv
+function rand_normal_quiet(σ, N, p)
+	σ * √2 * erfinv.(2 * hammersley(N, p) .- 1)
+end
 
 struct ParticleSet{T}
 	x::Vector{T}
@@ -99,12 +115,12 @@ function ParticleSet{T}(params::ParticleParameters, cells_num, L) where {T<:Real
 	set = ParticleSet{T}(params.charge, params.mass, params.ppc, cells_num, params.name)
 
 	init_V = getfield(Main, Symbol("rand_", params.V_distribution))
-	Vth = params.V_params .* √(1/set.m)
-	set.px .= init_V(Vth[1], set.N) .* set.m
-	set.py .= init_V(Vth[2], set.N) .* set.m
-	set.pz .= init_V(Vth[3], set.N) .* set.m
+	Vth = params.V_params .* √(1/set.m)  # V_params - "электронные" тепловые скорости
+	set.px .= init_V(Vth[1], set.N, 3) .* set.m
+	set.py .= init_V(Vth[2], set.N, 5) .* set.m
+	set.pz .= init_V(Vth[3], set.N, 7) .* set.m
 	init_R = getfield(Main, Symbol("rand_", params.R_distribution))
-	set.x .= init_R(L, set.N)
+	set.x .= init_R(L, set.N, 2)
 
 	set
 end

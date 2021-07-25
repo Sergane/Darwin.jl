@@ -4,32 +4,32 @@ dir = "data"
 
 [physical.species]
 name =   ["electron", "ion"]
-mass =   [ 1,        1836]
+mass =   [ 1 ,       1836]
 charge = [ -1,       1]
 
 # electron
 [[physical.species.V_distribution]]
-type = "normal"
+type = "normal_quiet"
 params = [0.0316, 0.0316, 0.1]
 [[physical.species.R_distribution]]
-type = "uniform"
+type = "uniform_quiet"
 
 # ion
 [[physical.species.V_distribution]]
-type = "normal"
+type = "normal_quiet"
 params = [0.0316, 0.0316, 0.1]
 [[physical.species.R_distribution]]
-type = "uniform"
+type = "uniform_quiet"
 
 [physical.domain_size]
-space = 5.24
-time = 50
+space = 25
+time = 1500
 
 [numerical]
-cells_num = 256
-time_step = 0.25
-particles_per_cell = [1000, 1000]
+cells_num = 128
+time_step = 0.1
+particles_per_cell = [500, 500]
 prestart_steps = 50
 
-[out]
-particle_dens_span = [10, 50]
+# [out]
+# particle_dens_span = [10, 50]
