@@ -30,7 +30,7 @@ function collect_sources!(φ, A, grid, species::Vector{<:ParticleSet})
 	boundary_condition!(A.μ)
 	boundary_condition!(A.fy)
 	boundary_condition!(A.fz)
-	# interpolation_bc!(A.ρ)
+	# interpolation_bc!(φ.ρ)
 end
 
 function collect_sources!(ρ, μ, fy, fz, grid, particle::ParticleSet)
@@ -50,11 +50,11 @@ function collect_sources!(ρ, μ, fy, fz, grid, particle::ParticleSet)
 	end
 
 	PPC = particle.PPC
-	q = particle.q
-	β = q / (particle.m * PPC)
+	q, m = particle.q, particle.m
+	β = q / (m * PPC)
 
 	ρ .*= q / PPC
-	μ .= ρ .* β
+	μ .= ρ .* (q/m)
 	fy .*= β
 	fz .*= β
 end
@@ -203,7 +203,7 @@ function prestart!(species, model, time)
 end
 
 
-function simulation!(species, model, time, dir)
+function simulation!(species, model, time, dir, field, energy)
 	g = model.g
 	φ = model.φ
 	A = model.A
@@ -213,9 +213,7 @@ function simulation!(species, model, time, dir)
 	Jy = similar(Jx)
 	Jz = similar(Jx)
 	dt = step(time)
-	field = Fields{Float64}(g.N, length(time))
-	J = [Densities{Float64}(g.N, length(time)) for i in eachindex(species)]
-	energy = Energies{Float64}(length(time), length(species))
+
 	@showprogress 1 "Computing..." for t in eachindex(time)
 		collect_sources!(φ, A, g, species)
 		scalar_potential!(φ, g)
@@ -248,13 +246,6 @@ function simulation!(species, model, time, dir)
 		field.Ex[:,t] .= Ex[g.in]
 		field.By[:,t] .= B.y[g.in]
 		field.Bz[:,t] .= B.z[g.in]
-	end
-	
-	write_SoA(dir*"energies.h5", energy.fields)
-	write_SoA(dir*"fields.h5", field)
-	for i in eachindex(species)
-		write_SoA(dir*"kinetic_energies_"*string(i)*".h5", energy.K[i])
-		# write_SoA(dir*"J_"*string(i)*".h5", J[i])
 	end
 end
 
@@ -297,11 +288,22 @@ let
 	# 	s.py .*= u/uʸ
 	# 	s.pz .*= u/uᶻ
 	# end
-	prestart!(model.species, model, model.time[1:params.prestart_steps])
+	# prestart!(model.species, model, model.time[1:params.prestart_steps])
 	# for s in species
 	# 	s.px .*= uˣ/u
 	# 	s.py .*= uʸ/u
 	# 	s.pz .*= uᶻ/u
 	# end
-	simulation!(model.species, model, model.time, dir)
+	# J = [Densities{Float64}(g.N, length(time)) for i in eachindex(species)]
+	field = Fields{Float64}(model.g[model.g.in], model.g.N, length(model.time))
+	energy = Energies{Float64}(model.time, length(model.species))
+
+	simulation!(model.species, model, model.time, dir, field, energy)
+	
+	write_SoA(dir*"energies.h5", energy)
+	write_SoA(dir*"fields.h5", field)
+	for (i,s) in enumerate(model.species)
+		write_SoA(dir*"kinetic_energies_"*s.name*".h5", energy.K[i])
+		# write_SoA(dir*"J_"*string(i)*".h5", J[i])
+	end
 end
